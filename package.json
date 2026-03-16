@@ -1,0 +1,33 @@
+{
+  "name": "unusual-whales-skill",
+  "version": "1.0.0",
+  "description": "Claude Code skill for Unusual Whales options analysis — GEX, volatility surface, flow, positioning, and defined-risk trade ideas via Playwright MCP",
+  "bin": {
+    "unusual-whales-skill": "./install.js"
+  },
+  "files": [
+    "install.js",
+    "uninstall.js",
+    "skill/SKILL.md",
+    "skill/references/"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-code-skill",
+    "unusual-whales",
+    "options",
+    "options-analysis",
+    "gex",
+    "volatility",
+    "dark-pool",
+    "playwright"
+  ],
+  "author": "chenxi",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
