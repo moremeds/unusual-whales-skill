@@ -1,20 +1,12 @@
 {
   "name": "unusual-whales",
-  "description": "Scrape Unusual Whales options data via Playwright MCP and generate comprehensive options analysis with VRP put-selling assessment, GEX-anchored trade ideas, and Discord delivery",
   "version": "2.0.0",
+  "description": "Scrape Unusual Whales options data via Playwright MCP and generate comprehensive options analysis with VRP put-selling assessment, GEX-anchored trade ideas, and Discord delivery",
   "author": {
-    "name": "chenxi"
+    "name": "moremeds"
   },
-  "skills": [
-    {
-      "name": "unusual-whales",
-      "path": "skill/SKILL.md",
-      "description": "Analyze options data from Unusual Whales — GEX, volatility, flow, positioning, VRP put-selling, and defined-risk trade ideas"
-    }
-  ],
-  "dependencies": {
-    "mcp": ["playwright"]
-  },
+  "repository": "https://github.com/moremeds/unusual-whales-skill",
+  "license": "MIT",
   "keywords": [
     "options",
     "unusual-whales",

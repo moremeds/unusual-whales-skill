@@ -8,7 +8,7 @@
   "description": "Unusual Whales options analysis with VRP put-selling assessment",
   "plugins": [
     {
-      "name": "unusual-whales-skill",
+      "name": "unusual-whales",
       "displayName": "Unusual Whales Options Analyzer",
       "description": "GEX, volatility, flow, positioning, VRP put-selling, and defined-risk trade ideas via Playwright MCP",
       "source": "./",
