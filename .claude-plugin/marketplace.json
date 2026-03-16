@@ -1,17 +1,14 @@
 {
-  "marketplaceVersion": "1.0",
   "name": "unusual-whales",
   "owner": {
-    "name": "moremeds"
+    "name": "moremeds",
+    "url": "https://github.com/moremeds"
   },
-  "displayName": "Unusual Whales Skills",
-  "description": "Unusual Whales options analysis with VRP put-selling assessment",
   "plugins": [
     {
       "name": "unusual-whales",
-      "displayName": "Unusual Whales Options Analyzer",
-      "description": "GEX, volatility, flow, positioning, VRP put-selling, and defined-risk trade ideas via Playwright MCP",
       "source": "./",
+      "description": "Unusual Whales options analysis with VRP put-selling, GEX-anchored trade ideas, and Discord delivery via Playwright MCP",
       "version": "2.0.0"
     }
   ]
