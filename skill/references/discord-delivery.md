@@ -11,8 +11,10 @@ https://discord.com/api/webhooks/1480254119590625360/3zxIB8w3ukYTK8K2DjC1SRUBHbV
 ## Delivery Flow
 
 ```
-Phase 4 (Format report) → Phase 5 (Send 6 rich embeds + 1 payoff chart image to Discord) → Brief confirmation in chat
+Phase 4 (Format report) → Phase 5 (Send 1 batched webhook + 1 payoff image to Discord) → Brief confirmation in chat
 ```
+
+**⚡ PERFORMANCE:** All 6 text embeds are sent in a **single webhook call** (Discord allows 10 embeds per message). Only the payoff chart image (Embed 7) requires a separate `multipart/form-data` call. Total: **2 webhook calls max** (was 7). Saves ~7s.
 
 Discord gets the complete analysis as 6 structured embeds + 1 payoff chart image (when available). Conversation gets only: ticker, score, recommendation, VRP signal, 1-line summary, and delivery status.
 
@@ -215,44 +217,61 @@ curl -s -o /dev/null -w "%{http_code}" \
 
 ## Sending with Bash + Python
 
-Build all 5 payloads in a single Python script, write to temp files, send via curl with 1.2s delays.
+**⚡ PERFORMANCE: Batch all 6 text embeds into a SINGLE webhook call.** Discord allows up to 10 embeds per message. Only the payoff image (Embed 7) needs a separate `multipart/form-data` call. This saves ~7s vs the old per-embed approach.
 
 ```python
 import json, os, subprocess, time
 
 WEBHOOK = "https://discord.com/api/webhooks/1480254119590625360/3zxIB8w3ukYTK8K2DjC1SRUBHbVs9-VtWmodLRCo3f92EZ8qetjF_1aUMO7GcIR9gkrO"
 
-# Build all 6 embeds (fill in from analysis data)
+# Build all 6 text embeds (fill in from analysis data)
 embeds = [embed1, embed2, embed3, embed4, embed5_vrp, embed6_trade]
 
-results = []
-for i, emb in enumerate(embeds):
-    path = f"/tmp/discord-uw-emb{i+1}.json"
-    with open(path, 'w') as f:
-        json.dump({"embeds": [emb]}, f)
-    os.chmod(path, 0o600)
+# --- Call 1: Send all 6 text embeds in ONE request ---
+path = "/tmp/discord-uw-batch.json"
+with open(path, 'w') as f:
+    json.dump({"embeds": embeds}, f)
+os.chmod(path, 0o600)
 
-    r = subprocess.run(
+r = subprocess.run(
+    ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+     "-H", "Content-Type: application/json",
+     "-d", f"@{path}", WEBHOOK],
+    capture_output=True, text=True, timeout=15
+)
+batch_status = r.stdout.strip()
+os.remove(path)
+
+results = [batch_status]
+embed_count = 6
+
+# --- Call 2 (optional): Send payoff image as separate multipart call ---
+payoff_path = f"/tmp/uw-payoff-{ticker}-{date}.png"
+if os.path.exists(payoff_path):
+    time.sleep(1.2)  # Rate limit between the 2 calls
+    img_r = subprocess.run(
         ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-         "-H", "Content-Type: application/json",
-         "-d", f"@{path}", WEBHOOK],
+         "-F", f'payload_json={{"embeds":[{{"title":"📉 Payoff Diagram","image":{{"url":"attachment://uw-payoff-{ticker}.png"}},"color":{color_int},"footer":{{"text":"Black-Scholes estimate • Verify at broker"}}}}]}}',
+         "-F", f"file1=@{payoff_path};filename=uw-payoff-{ticker}.png",
+         WEBHOOK],
         capture_output=True, text=True, timeout=15
     )
-    results.append(r.stdout.strip())
-    if i < len(embeds) - 1:
-        time.sleep(1.2)  # Rate limit: ~5 messages per 2 seconds
-    os.remove(path)
+    results.append(img_r.stdout.strip())
+    embed_count = 7
 
 success = sum(1 for r in results if r in ("200", "204"))
-print(f"Discord: {success}/6 embeds sent")
+print(f"Discord: {success}/{len(results)} calls ({embed_count} embeds sent)")
 ```
 
 ### Key points:
+- **⚡ Batch all text embeds** into one `{"embeds": [e1, e2, ..., e6]}` call — Discord allows 10 embeds per message
+- **Only 2 webhook calls max** (1 for text embeds, 1 for payoff image) vs the old 7 separate calls
+- **Saves ~7 seconds** (eliminated 5 × 1.2s inter-message delays)
 - **Always use `json.dump()`** to handle escaping (newlines, quotes, special chars in descriptions)
 - **Always write to temp file** then `curl -d @file` — never inline JSON in shell
-- **1.2-second delays** between messages to respect Discord rate limits
 - **`chmod 600`** on temp files (security hygiene)
-- **Track per-message success** and report count to user
+- **Track per-call success** and report count to user
+- **Total payload must stay under 6000 chars per embed** — already enforced by truncation rules
 
 ## Discord Embed Limits
 

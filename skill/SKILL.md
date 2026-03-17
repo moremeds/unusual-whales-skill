@@ -69,14 +69,31 @@ Analyze options data from Unusual Whales for any ticker: dealer positioning (GEX
 | # | Page | URL | Wait | Data |
 |---|------|-----|------|------|
 | 1 | GEX | `/stock/{T}/greek-exposure` | already loaded | GEX by strike, flip points, walls, vanna/charm |
-| 2 | Volatility | `/stock/{T}/volatility` | 3-4s | IV, IV rank, HV, skew, term structure |
-| 3 | Net Premium | `/stock/{T}/net-premium` | 3-4s | Net premium by expiry, C/P ratio, flow |
-| 4 | OI Changes | `/stock/{T}/open-interest-changes` | 3-4s | Per-strike call/put OI deltas [T+1] |
-| 5 | Shorts | `/stock/{T}/shorts` | 3-4s | Short volume ratio, shares available, DTC [T+1] |
-| 6 | Dark Pool | `/dark-pool-flow` | 3-4s | Market-wide feed, filter for ticker |
+| 2 | Volatility | `/stock/{T}/volatility` | smart poll* | IV, IV rank, HV, skew, term structure |
+| 3 | Net Premium | `/stock/{T}/net-premium` | smart poll* | Net premium by expiry, C/P ratio, flow |
+| 4 | OI Changes | `/stock/{T}/open-interest-changes` | smart poll* | Per-strike call/put OI deltas [T+1] |
+| 5 | Shorts | `/stock/{T}/shorts` | smart poll* | Short volume ratio, shares available, DTC [T+1] |
+| 6 | Dark Pool | `/dark-pool-flow` | smart poll* | Market-wide feed, filter for ticker |
+
+*⚡ **Smart wait:** Instead of fixed 3-4s, poll for `[data-highcharts-chart]` element every 500ms with 6s timeout. Most pages render in 1-2s. Use this JS via `browser_evaluate` after each navigation:
+```js
+// Smart readiness poll — returns true when chart is ready, or false after timeout
+() => new Promise(resolve => {
+  let elapsed = 0;
+  const check = () => {
+    if (document.querySelector('[data-highcharts-chart]')) return resolve(true);
+    elapsed += 500;
+    if (elapsed >= 6000) return resolve(false);
+    setTimeout(check, 500);
+  };
+  check();
+})
+```
+
+**⚡ Performance: Discord delivery batched** — all 6 text embeds sent in 1 webhook call (saves ~7s). See `references/discord-delivery.md`.
 
 **`--fast` mode skips pages 3-6** (unchanged behavior — GEX + Vol only).
-Total time: ~60-80s default (was ~45-60s), ~30s fast.
+Total time: **~40-55s default** (was ~60-80s), ~20-25s fast.
 
 See `references/extraction-strategies.md` for per-page extraction JS code.
 
@@ -261,7 +278,7 @@ Full report sections (used by Discord delivery):
 
 See `references/discord-delivery.md` for full embed templates and payload builder.
 
-Send each embed as a separate webhook call with 1.2-second delays. Track success/failure per message.
+**⚡ Batch all 6 text embeds into a SINGLE webhook call** (Discord allows 10 embeds per message). Only the payoff image needs a separate multipart call. Total: 2 calls max. See `references/discord-delivery.md` for the batched sender code.
 
 **Conversation output (minimal):**
 After Discord delivery, display only:
