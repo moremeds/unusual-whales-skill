@@ -707,6 +707,188 @@ else:
     darkpool_score = 0
 ```
 
+## Scan-Mode Signal Extraction
+
+These extraction steps run during Phase S3 of scan mode. They add skew, PCR, and GEX context to scan candidates.
+
+### Step S-Skew: IV Skew for Scan Candidates
+
+**No page navigation needed — API-only.** Run via `browser_evaluate` on any already-loaded UW page.
+
+```js
+// Fetch IV skew for a scan candidate
+// Step 1: Get term structure to find nearest 20-40 DTE expiry
+// Step 2: Fetch risk_reversal_skew for that expiry
+// Step 3: Fallback to percentiles if 400 error
+(ticker) => {
+  return fetch(`https://phx.unusualwhales.com/api/iv_term_structure/${ticker}`)
+    .then(r => r.json())
+    .then(ts => {
+      if (!Array.isArray(ts) || ts.length === 0) throw new Error('No term structure');
+
+      // Find nearest 20-40 DTE expiry
+      const target = ts.filter(e => {
+        const dte = parseInt(e.dte);
+        return dte >= 20 && dte <= 40;
+      }).sort((a, b) => parseInt(a.dte) - parseInt(b.dte))[0];
+
+      const expiry = target ? target.expiry : ts.find(e => parseInt(e.dte) >= 14)?.expiry;
+      if (!expiry) throw new Error('No suitable expiry');
+
+      return fetch(`https://phx.unusualwhales.com/api/volatility/risk_reversal_skew/${ticker}?expiry=${expiry}`)
+        .then(r => {
+          if (!r.ok) throw new Error(`RR skew ${r.status}`);
+          return r.json();
+        })
+        .then(skew => {
+          if (!Array.isArray(skew) || skew.length < 3) throw new Error('Insufficient skew data');
+
+          // Index 2 = 25-delta row
+          const row = skew[2] || skew[skew.length - 1];
+          const putIV = parseFloat(row.put_volatility);
+          const callIV = parseFloat(row.call_volatility);
+          const magnitude = putIV - callIV; // [~RR_PROXY]
+
+          return {
+            ticker,
+            expiry,
+            put_iv_25d: putIV,
+            call_iv_25d: callIV,
+            skew_magnitude: parseFloat(magnitude.toFixed(4)),
+            source: 'risk_reversal_skew',
+            badge: '[~RR_PROXY]'
+          };
+        });
+    })
+    .catch(err => {
+      // Fallback: percentiles endpoint
+      return fetch(`https://phx.unusualwhales.com/api/volatility/percentiles/${ticker}?timespan=1y`)
+        .then(r => r.json())
+        .then(pct => {
+          if (!Array.isArray(pct) || pct.length === 0) return { ticker, error: err.message, source: 'none' };
+
+          // Find ~30 DTE entry
+          const entry = pct.find(e => parseInt(e.dte) >= 25 && parseInt(e.dte) <= 45) || pct[0];
+          const skewness = parseFloat(entry.skewness || 0);
+
+          return {
+            ticker,
+            skewness,
+            expiry: entry.expiry,
+            source: 'percentiles',
+            badge: '[API-CONTEXT]'
+          };
+        })
+        .catch(() => ({ ticker, error: err.message, source: 'none' }));
+    });
+}
+```
+
+**Post-extraction: Cross-sectional z-score computation**
+
+After fetching skew for all candidates, compute z-scores within the batch:
+
+```
+all_magnitudes = [c.skew_magnitude for c in candidates if c.skew_magnitude is not None]
+mean = avg(all_magnitudes)
+std = stddev(all_magnitudes)
+for each candidate:
+    candidate.skew_z = (candidate.skew_magnitude - mean) / max(std, 0.001)
+```
+
+**Gates (check before scoring):**
+```
+# Earnings gate: skip if earnings within 10 days
+events = fetch('/api/ticker/{T}/price').events
+if any event is 'earnings' within 10 trading days: skip skew scoring
+
+# Regime gate: skip if R2 proxy
+if term_structure_inverted AND vrp_negative: skip all skew flagging
+
+# Liquidity gate: skip if option volume < 1000
+total_vol = sum(call_volume + put_volume) from net-prem-expiry
+if total_vol < 1000: skip skew scoring
+```
+
+### Step S-PCR: Put-Call Ratio from Net Premium Data
+
+**No extra navigation needed.** PCR is computed from net-prem-expiry data already fetched for conviction scoring.
+
+```js
+// Compute PCR from already-fetched net-prem-expiry data
+// Input: net_prem_data = response from /api/stock/{T}/net-prem-expiry
+(net_prem_data) => {
+  if (!Array.isArray(net_prem_data) || net_prem_data.length === 0) {
+    return { pcr: null, error: 'No net-prem data' };
+  }
+
+  let totalPutVol = 0, totalCallVol = 0;
+  let totalPutPrem = 0, totalCallPrem = 0;
+
+  for (const row of net_prem_data) {
+    totalCallVol += parseInt(row.call_volume || 0);
+    totalPutVol += parseInt(row.put_volume || 0);
+    totalCallPrem += parseFloat(row.call_premium || 0);
+    totalPutPrem += parseFloat(row.put_premium || 0);
+  }
+
+  const pcr_vol = totalCallVol > 0 ? totalPutVol / totalCallVol : null;
+  const pcr_prem = totalCallPrem > 0 ? totalPutPrem / totalCallPrem : null;
+  const total_volume = totalCallVol + totalPutVol;
+
+  // Label using fixed absolute thresholds
+  let label = 'neutral';
+  let flag = null;
+  if (pcr_vol > 1.5) { label = 'extreme_fear'; flag = '🔥'; }
+  else if (pcr_vol > 1.2) { label = 'elevated_fear'; flag = '🔥'; }
+  else if (pcr_vol < 0.5) { label = 'complacent'; flag = '⚠'; }
+
+  return {
+    pcr_volume: pcr_vol ? parseFloat(pcr_vol.toFixed(2)) : null,
+    pcr_premium: pcr_prem ? parseFloat(pcr_prem.toFixed(2)) : null,
+    total_option_volume: total_volume,
+    label,
+    flag,
+    source: 'net-prem-expiry'
+  };
+}
+```
+
+**Liquidity gate:** If `total_option_volume < 1000`, set label to `neutral` and skip PCR scoring.
+
+**Earnings gate:** If earnings within 5 trading days, suppress PCR label — spike is rational hedging.
+
+### Step S-GEX: GEX Context for Top Candidates
+
+**Requires page navigation — limited to top 5-8 candidates only.** Uses the same GEX extraction code as single-ticker mode (Step 1 in Master Extraction Code).
+
+For each top candidate:
+1. Navigate to `/stock/{T}/greek-exposure`
+2. Wait 3-4s
+3. Extract using Step 1 GEX extraction code
+4. Classify:
+   - `net_gex > 0` → positive GEX (safe, dealers dampening)
+   - `net_gex < 0` → negative GEX (amplifying, dealers short gamma)
+   - Compute `flip_distance = (current_price - flip_point) / current_price`
+
+**Scoring limitation:**
+- GEX flags apply only to: QQQ, SPY, IWM, and stocks with market cap > $100B
+- For other candidates: show GEX data as `[INFO]` context, do not flag up/down
+
+**Mega-cap detection:**
+```js
+// Check if candidate qualifies for GEX scoring
+(ticker) => {
+  const megaCaps = ['QQQ', 'SPY', 'IWM']; // Always eligible
+  if (megaCaps.includes(ticker)) return true;
+
+  return fetch(`https://phx.unusualwhales.com/api/companies/${ticker}?thin=true`)
+    .then(r => r.json())
+    .then(data => parseFloat(data.market_cap || 0) > 100e9)
+    .catch(() => false);
+}
+```
+
 ## Viewport Notes
 
 - Resize browser to 1440x900 minimum to avoid "zero width chart" errors

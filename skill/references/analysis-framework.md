@@ -98,6 +98,24 @@ skew_score = 0
 
 term_score = +4 if contango else -4 if backwardation else 0
 
+# Skew actionable labels (applied after scoring):
+# From risk_reversal_skew 25-delta row: skew_magnitude = put_iv - call_iv [~RR_PROXY]
+# From percentiles endpoint: use skewness field for ~30 DTE expiry
+#
+# Magnitude label:
+#   |skew_magnitude| > 0.10 (10%) OR |skewness| > 2.0 → "Extreme"
+#   |skew_magnitude| > 0.05 (5%)  OR |skewness| > 1.0 → "Elevated"
+#   else → "Normal"
+#
+# Swing trade label:
+#   skewness < -1.0 (or skew_magnitude < -0.05) → "Preferred for longs"
+#   skewness > 1.5 (or skew_magnitude > 0.075) → "Caution: informed puts"
+#   skewness > 2.0 (or skew_magnitude > 0.10)  → "Avoid for longs"
+#   else → no label
+#
+# Earnings gate: suppress skew labels if earnings within 10 days
+# Output: Include magnitude label + swing label in Volatility section and Embed 3
+
 volatility = clamp(iv_rank_score + spread_score + skew_score + term_score, -28, 28)
 ```
 
@@ -158,6 +176,21 @@ darkpool_score = 0
 #   If other_bucket_score < 0: darkpool_score = -4 (confirms bearish bias)
 #   If neutral: darkpool_score = +2 (institutional interest is mildly bullish)
 # If no significant prints or no prints found: darkpool_score = 0
+
+# PCR sentiment labels (applied after scoring):
+# PCR = sum(put_volume) / sum(call_volume) from net-prem-expiry data
+# Uses fixed absolute thresholds (no historical data for z-scores):
+#
+#   PCR > 1.5 → label = "extreme_fear"   (strong contrarian buy signal)
+#   PCR > 1.2 → label = "elevated_fear"  (favorable backdrop, puts expensive)
+#   PCR 0.5-1.2 → label = "neutral"
+#   PCR < 0.5 → label = "complacent"     (caution for longs)
+#
+# Earnings gate: suppress PCR label if earnings within 5 trading days
+# VRP integration: if PCR elevated_fear or above → note "puts expensive, favorable to sell"
+# Asymmetry: bearish PCR signals (high PCR → contrarian buy) are stronger than
+#   bullish (low PCR → sell). Weight accordingly in qualitative assessment.
+# Output: Include PCR label in Flow section and integrate with VRP Embed 5
 
 flow = clamp(premium_score + ratio_score + darkpool_score, -24, 24)
 ```
@@ -224,6 +257,33 @@ NEUTRAL:     -19 to +19
 SELL:        -59 to -20
 STRONG SELL: -100 to -60
 ```
+
+### Opex Pinning Detection
+
+Automatically detect when analyzing during opex week (monthly options expiry, 3rd Friday):
+
+**Detection logic:**
+```
+# Check if current date is within 3 calendar days of monthly opex
+# Monthly opex = 3rd Friday of the month
+import datetime
+today = datetime.date.today()
+# Find 3rd Friday of current month
+first_day = today.replace(day=1)
+# Count Fridays: first Friday + 14 days = 3rd Friday
+day_of_week = first_day.weekday()  # 0=Mon, 4=Fri
+days_to_friday = (4 - day_of_week) % 7
+third_friday = first_day + datetime.timedelta(days=days_to_friday + 14)
+opex_window = abs((today - third_friday).days) <= 3
+```
+
+**If opex week detected AND large gamma concentration at nearby strike:**
+- Flag "GEX Pinning likely" in Market Structure section
+- Note expected pin range: max-gamma strike ± 1% (from GEX data)
+- Influence trade ideas: favor iron condors/butterflies centered on max-gamma strike
+- Add to report: "⚡ Opex Week — GEX pinning at ${MAX_GAMMA_STRIKE} (±{PIN_RANGE}%)"
+
+**Max-gamma strike:** The strike with highest absolute GEX value from the GEX chart data.
 
 ## Trade Idea Generation
 
@@ -468,3 +528,23 @@ If a section is unavailable:
 - If timestamps span > 15 minutes, add warning: "Data extracted over {N}min — may reflect different market conditions"
 - Display per-section timestamps in the report
 - Positioning data is always T+1 — note this separately from live data timestamps
+
+## Scan Mode: 2-Tier Composite Score
+
+See `scan-playbook.md` for full details. Summary:
+
+**Tier 1: Flow Conviction Score (0-5)** — unchanged, primary gate
+**Tier 2: Confirmation Flags** — skew, PCR, GEX modifiers
+
+| Flag | Condition | Badge |
+|------|-----------|-------|
+| Skew Confirms | Skew z < 0 (calls) or z > 1 (puts) | ✅ |
+| Skew Warns | Skew z > 1.5 (calls) | ⚠ |
+| Skew Blocks | Skew z > 2.0 (calls) | 🛑 |
+| PCR Fear | PCR > 1.2 | 🔥 |
+| PCR Complacent | PCR < 0.5 | ⚠ |
+| GEX Safe | Positive GEX (mega-caps only) | ✅ |
+| GEX Danger | Negative GEX (mega-caps only) | ⚠ |
+| VRP Favorable | VRP z > 0.5 + normal TS | ✅ |
+
+**Filtering:** Score 4+ no red → proceed. Score 4+ red → downgrade. Score 3 + multiple green → upgrade.

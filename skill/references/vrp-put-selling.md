@@ -55,12 +55,19 @@ Use the skill's existing signals as regime proxy:
 ```
 if term_structure_inverted AND vrp_zscore < 0:
     regime = "R2"  # Risk-Off — DO NOT SELL
+    regime_reason = "Term structure inverted + VRP negative"
+elif net_gex < 0 AND (flip_point - current_price) / current_price > 0.02 AND vrp_zscore < 0.3:
+    regime = "R2"  # Risk-Off — deeply negative GEX strengthens R2
+    regime_reason = "Deeply negative GEX + thin VRP"
 elif term_structure_inverted OR vrp_zscore < 0.3:
     regime = "R1"  # Choppy — reduce size
+    regime_reason = "Caution: " + ("inverted TS" if term_structure_inverted else "thin VRP")
 elif gex_flip_below_price AND vrp_zscore > 0.5:
     regime = "R0"  # Healthy — full size
+    regime_reason = "Positive GEX + elevated VRP"
 else:
     regime = "R1"  # Default cautious
+    regime_reason = "Mixed signals"
 ```
 
 ### Step 5: Term Structure Ratio
@@ -95,6 +102,22 @@ if vix_vix3m_ratio > 1.05: term structure inverted → STOP
 | 4 | Term structure not inverted | ratio < 1.05 | UW term structure endpoint |
 | 5 | No earnings within 14 days | Check events | UW price endpoint `events` |
 
+### PCR Confluence (Enhancer)
+
+PCR sentiment enhances the VRP put-selling signal but does not gate it:
+
+| PCR Level | Effect on VRP Signal |
+|-----------|---------------------|
+| Extreme Fear (PCR > 1.5) | "Puts expensive, maximum premium harvest" — note in output |
+| Elevated Fear (PCR > 1.2) | "Puts expensive, favorable to sell" — note in output |
+| Neutral (0.5-1.2) | No effect on VRP signal |
+| Complacent (PCR < 0.5) | Caution: "Low fear = thin put premium" — reduce confidence |
+
+**Integration with VRP Embed (Embed 5):**
+- If PCR `elevated_fear` or above AND VRP signal = SELL → add "PCR confirms: elevated fear → good premium window"
+- If PCR `complacent` AND VRP signal = SELL → add "PCR caution: complacent market, premium may be thin"
+- PCR does NOT override VRP SELL/DO NOT SELL — it provides confidence context only
+
 ### STOP Conditions (ANY one halts selling)
 
 | # | Condition | Detection |
@@ -103,6 +126,27 @@ if vix_vix3m_ratio > 1.05: term structure inverted → STOP
 | 2 | Term structure inverted (ratio > 1.05) | Front-end fear |
 | 3 | Regime R2 | GEX above price + backwardation |
 | 4 | GEX deeply negative | Dealers amplifying moves |
+
+### GEX Negative Gate (Override)
+
+GEX regime provides a safety override for put selling:
+
+**Rule:** If GEX is deeply negative (net GEX < 0 AND flip point > current price by >2%), override VRP signal to **CAUTION** even if all VRP entry conditions pass.
+
+**Rationale:** Negative gamma means dealers amplify downside moves. Selling puts in this regime exposes you to accelerated losses even when VRP is elevated.
+
+**Implementation:**
+```
+if net_gex < 0 AND (flip_point - current_price) / current_price > 0.02:
+    if vrp_signal == "SELL":
+        vrp_signal = "CAUTION"
+        vrp_reason = "VRP conditions met but GEX deeply negative — dealers amplifying downside"
+```
+
+**GEX-informed VRP output in Embed 5:**
+- Positive GEX → "GEX: Positive — dealers dampening (safe for put-sell)"
+- Negative GEX (mild) → "GEX: Slightly negative — monitor dealer positioning"
+- Negative GEX (deep, flip >2% above) → "GEX: Deeply negative — CAUTION override active"
 
 ## Delta & DTE Selection
 

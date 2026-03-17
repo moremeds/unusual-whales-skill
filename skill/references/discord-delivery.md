@@ -93,7 +93,7 @@ color_map = {
       {"name": "52w RV Range", "value": "{RV_LOW}% – {RV_HIGH}%", "inline": true},
       {"name": "VRP", "value": "{VRP_VALUE} ({VRP_INTERP})", "inline": true},
       {"name": "\u200b", "value": "\u200b", "inline": true},
-      {"name": "Skew", "value": "**{SKEW_DIRECTION}** — 25δ Put ~{PUT_IV}% vs Call ~{CALL_IV}% (Δ{SKEW_MAG}%)\n{SKEW_INTERPRETATION}", "inline": false},
+      {"name": "Skew", "value": "**{SKEW_DIRECTION}** — 25δ Put ~{PUT_IV}% vs Call ~{CALL_IV}% (Δ{SKEW_MAG}%) `[~RR_PROXY]`\nMagnitude: {SKEW_LABEL} | Swing: {SWING_LABEL}\n{SKEW_INTERPRETATION}", "inline": false},
       {"name": "Term Structure", "value": "**{CONTANGO_OR_BACKWARDATION}** ({N_EXPIRATIONS} expirations)\nNear: {NEAR_IV}% ({NEAR_DTE} DTE) → Mid: {MID_IV}% ({MID_DTE} DTE) → Far: {FAR_IV}% ({FAR_DTE} DTE)\n{TERM_INTERPRETATION}", "inline": false},
       {"name": "Implied Moves", "value": "1d ±{IM_1D}% | 5d ±{IM_5D}% | 30d ±{IM_30D}%", "inline": false}
     ],
@@ -135,6 +135,7 @@ color_map = {
 ## Embed 5: VRP Put-Selling Assessment
 
 **Always included.** Shows VRP state and put-selling signal.
+Now also includes PCR sentiment and GEX regime context for put-selling assessment.
 
 ```json
 {
@@ -148,6 +149,8 @@ color_map = {
       {"name": "IV Percentile", "value": "{IV_PCTILE}/100", "inline": true},
       {"name": "Term Structure", "value": "{TS_LABEL} (ratio {TS_RATIO})", "inline": true},
       {"name": "Regime Proxy", "value": "{REGIME} ({REGIME_REASON})", "inline": true},
+      {"name": "PCR Sentiment", "value": "{PCR_VALUE} ({PCR_LABEL}){PCR_VRP_NOTE}", "inline": true},
+      {"name": "GEX Regime", "value": "{GEX_SIGN} — {GEX_IMPLICATION}", "inline": true},
       {"name": "Signal", "value": "**{VRP_SIGNAL}**", "inline": true},
       {"name": "Put Credit Spread", "value": "{IF_SELL: Sell ${SELL_STRIKE} P / Buy ${BUY_STRIKE} P — {EXPIRY} ({DTE} DTE)\nΔ{DELTA} · ${WIDTH} wide · Credit ~${CREDIT}\nVRP Scale: {VRP_SCALE}x · GEX anchor: ${GEX_SUPPORT}}\n{IF_NO_SELL: ⛔ {REASON}}", "inline": false},
       {"name": "Management", "value": "• Profit: 50% of credit\n• Stop: 2× credit\n• VRP stop: Close if z < −0.5\n• Time: Close at 14 DTE\n• GEX: Close below ${GEX_SUPPORT}", "inline": false}
@@ -273,7 +276,7 @@ print(f"Discord: {success}/6 embeds sent")
 
 ## Scan Mode Embeds
 
-Scan mode uses **3 embeds** (not 5). Color is always `0x3498db` (blue — scan reports are not directional).
+Scan mode uses **4 embeds** (not 5). Color is always `0x3498db` (blue — scan reports are not directional).
 
 ### Scan Embed 1: Scan Summary
 
@@ -350,7 +353,34 @@ Only sent if a **Type F (Multi-Signal Confluence)** candidate exists, OR if any 
 - `{SIGNAL_LIST}`: bullet list of which signals fired, e.g., "• Deep Conviction: $1.2M call sweep at $180 strike\n• GEX: pinned at $175 with +$2.1M gamma wall\n• Squeeze: SI 24%, util 93%"
 - `{STRATEGY_TYPE}`: from position sizing rules (e.g., "Bull Call Spread 30-45 DTE")
 - `{SIZE_RULE}`: from playbook (e.g., "3% max position, 1% max loss")
-- If no Type F or 5/5 candidate exists, **skip this embed entirely** (send only 2 embeds, report "2/2" in conversation)
+- If no Type F or 5/5 candidate exists, **skip this embed entirely** (send only 3 embeds, report "3/3" in conversation)
+
+### Scan Embed 4: Signal Layer Matrix
+
+Shows skew, PCR, and GEX context for all classified candidates. **Always sent** (unlike Embed 3 which is optional).
+
+```json
+{
+  "embeds": [{
+    "title": "📊 Signal Layers — Skew / PCR / GEX",
+    "color": 3447003,
+    "description": "```\nTicker │ Skew Z │ PCR    │ GEX    │ Score │ Flags\n───────┼────────┼────────┼────────┼───────┼────────\n{T1}   │ {SKZ1} │ {PCR1} │ {GEX1} │ {S1}/5│ {FLAGS1}\n{T2}   │ {SKZ2} │ {PCR2} │ {GEX2} │ {S2}/5│ {FLAGS2}\n{T3}   │ {SKZ3} │ {PCR3} │ {GEX3} │ {S3}/5│ {FLAGS3}\n{T4}   │ {SKZ4} │ {PCR4} │ {GEX4} │ {S4}/5│ {FLAGS4}\n{T5}   │ {SKZ5} │ {PCR5} │ {GEX5} │ {S5}/5│ {FLAGS5}\n```",
+    "fields": [
+      {"name": "Flag Legend", "value": "✅ Confirms | ⚠ Caution | 🛑 Avoid | 🔥 Fear (contrarian buy)", "inline": false},
+      {"name": "Data Sources", "value": "Skew: risk_reversal_skew `[~RR_PROXY]` | PCR: net-prem-expiry volumes | GEX: greek-exposure page (mega-caps only)", "inline": false}
+    ],
+    "footer": {"text": "Cross-sectional z-scores • Not time-series • Gates: earnings/regime/liquidity applied"}
+  }]
+}
+```
+
+**Notes:**
+- `{SKZ}` format: `-0.8 ✅` or `+1.6 ⚠` or `+2.1 🛑` (z-score + flag badge)
+- `{PCR}` format: `1.8 🔥` or `0.9` or `0.3 ⚠` (ratio + flag if extreme)
+- `{GEX}` format: `+GEX ✅` or `-GEX ⚠` or `n/a` (for non-mega-caps, show raw value without flag)
+- `{FLAGS}` = concatenation of all flag badges: `✅✅🔥` or `⚠🛑`
+- Table capped at 8 rows to stay within 4096-char description limit
+- If skew data unavailable for a candidate, show `n/a` in Skew Z column
 
 ---
 

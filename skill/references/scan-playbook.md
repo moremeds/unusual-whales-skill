@@ -117,8 +117,116 @@ Domain knowledge for the `--scan` workflow. Extracted from the UW Options Analys
 | D | Squeeze Candidate | SI >20% + utilization >90% + DTC >5 | SI% + utilization |
 | E | Dark Pool Accumulation | 3+ prints >$1M at similar level in 5 days | Total DP premium |
 | F | Multi-Signal Confluence | 2+ of types A-E overlap for same ticker | Combined score |
+| G | IV Skew Anomaly | Skew cross-sectional z-score > 1.5 | Skew z-score |
 
 **Type F is the highest-edge setup.** When 2+ independent signals converge on the same ticker, the probability of a meaningful move increases substantially.
+
+---
+
+## Scan Signal Layers
+
+These layers run in Phase S3 after conviction filtering. They provide context flags, NOT standalone directional signals.
+
+### Layer 1: IV Skew (Type G Detection)
+
+**Data source:** `/api/volatility/risk_reversal_skew/{T}?expiry={E}` (25-delta row, index 2)
+- **Expiry selection:** First fetch `/api/iv_term_structure/{T}` to find nearest 20-40 DTE expiry
+- **Fallback:** If risk_reversal_skew returns 400, use `/api/volatility/percentiles/{T}?timespan=1y` → `skewness` field per expiry
+
+**Computation:**
+- `skew_magnitude = put_volatility - call_volatility` from 25-delta row — this is an RR proxy `[~RR_PROXY]`, not pure ATM skew
+- Rank all candidates cross-sectionally by skew magnitude → compute z-score within the batch
+- **NO time-series z-score** (skill is stateless, no persistence)
+
+**Thresholds (cross-sectional z-score):**
+
+| Skew Z | Label | Flag | Meaning |
+|--------|-------|------|---------|
+| > 2.0 | AVOID for longs | 🛑 Red | Extreme informed bearish flow |
+| > 1.5 | CAUTION — informed puts | ⚠ Amber | Elevated put skew |
+| -1.0 to 1.5 | Neutral | — | No signal |
+| < -1.0 | PREFERRED — no informed puts | ✅ Green | Clean entry for longs |
+
+**Gates (must pass before scoring):**
+- **Earnings gate:** Exclude candidates with earnings within 10 days (from `/api/ticker/{T}/price` events field) — pre-earnings skew is hedging, not informed flow
+- **Regime gate:** Disable skew flagging entirely if market is in R2 proxy (term structure inverted + VRP negative) — all stocks have steep skew in panics
+- **Liquidity gate:** Skip skew check for candidates with total option volume < 1000 contracts (from net-prem data)
+
+**Integration with flow direction:**
+- Deep Conviction CALL + HIGH skew (z > 1.5) → flag amber "likely hedging, not directional"
+- Deep Conviction CALL + LOW skew (z < -1.0) → flag green "clean entry — no informed puts"
+- Deep Conviction PUT + HIGH skew (z > 1.5) → flag green "confirms bearish thesis"
+
+### Layer 2: Put-Call Ratio Sentiment
+
+**Data source:** net-prem-expiry endpoint provides `call_volume` and `put_volume`. PCR = `sum(put_volume) / sum(call_volume)` across all expiries.
+
+**Thresholds (fixed absolute — no historical data available):**
+
+| PCR | Label | Flag | Meaning |
+|-----|-------|------|---------|
+| > 1.5 | Extreme Fear | 🔥 | Strong contrarian buy signal |
+| > 1.2 | Elevated Fear | 🔥 | Favorable backdrop, puts expensive |
+| 0.5-1.2 | Neutral | — | No signal |
+| < 0.5 | Complacent | ⚠ Amber | Caution for longs |
+
+**Gates:**
+- **Earnings gate:** Exclude PCR scoring if earnings within 5 trading days — spike is rational hedging
+- **Liquidity gate:** Skip if total option volume < 1000 (noisy single-block trades)
+- **Asymmetry:** Bearish PCR signals (high PCR → contrarian buy) are stronger than bullish (low PCR → sell). Weight accordingly.
+
+**Integration:**
+- Bullish candidates + `extreme_fear` PCR → flag green "contrarian buy: extreme fear"
+- Bullish candidates + `complacent` PCR → flag amber "caution: no fear support"
+- VRP put-selling: `elevated_fear` or `extreme_fear` PCR = "puts expensive, favorable to sell"
+
+### Layer 3: GEX Context (Scan Mode)
+
+**New scan step in S3, after classification.** For top 5-8 candidates only:
+- Navigate to `/stock/{T}/greek-exposure`
+- Extract: GEX flip point, net GEX sign, price vs flip distance, max-gamma strike
+- Classify: positive GEX (safe), negative GEX (amplifying), neutral
+
+**Scoring limitation:** GEX flag weight applies ONLY to:
+- QQQ, SPY, IWM (index ETFs — dealer positioning assumption is reliable)
+- Mega-cap stocks (market cap >$100B) — sufficient option market depth
+- For all other candidates: show GEX data as informational context but do NOT use it to flag up/down
+
+**Integration:**
+- Mega-cap bullish setups in negative GEX → flag amber "caution: dealers amplifying downside"
+- Put-sell candidates in positive GEX → flag green "GEX confirms: dealers dampening"
+- Show max-gamma strike as potential support level in scan output
+
+---
+
+## 2-Tier Scan Scoring
+
+The existing 5-point flow conviction score remains the **primary gate**. The new signals are filters/context, not standalone directional signals.
+
+### Tier 1: Flow Conviction Score (0-5, unchanged)
+
+Same 5 criteria: vol > OI, 80% at ask, $500K+, single-leg, near-money.
+
+### Tier 2: Confirmation Flags (modifiers on the flow score)
+
+| Flag | Condition | Effect | Badge |
+|------|-----------|--------|-------|
+| Skew Confirms | Skew z < 0 (calls) or z > 1 (puts) | Green confirmation | ✅ |
+| Skew Warns | Skew z > 1.5 (calls) or z < -1 (puts) | Amber warning | ⚠ |
+| Skew Blocks | Skew z > 2.0 (calls) | Red block | 🛑 |
+| PCR Fear | PCR > 1.2 | Green (contrarian buy) | 🔥 |
+| PCR Complacent | PCR < 0.5 | Amber caution | ⚠ |
+| GEX Safe | Positive GEX (mega-caps only) | Green | ✅ |
+| GEX Danger | Negative GEX (mega-caps only) | Amber | ⚠ |
+| VRP Favorable | VRP z > 0.5 + term structure normal | Green (put-sell) | ✅ |
+
+**Output format:** `AAPL 4/5 ✅✅🔥` or `NVDA 5/5 ⚠🛑` — flow score plus colored flags.
+
+**Filtering logic:**
+- Score 4+ with no red flags → proceed to classification
+- Score 4+ with amber flags → proceed with caution note
+- Score 4+ with red block → DOWNGRADE: do not classify as high-conviction
+- Score 3 with multiple green flags → UPGRADE: proceed to classification (multi-signal confluence)
 
 ---
 
@@ -161,6 +269,7 @@ Domain knowledge for the `--scan` workflow. Extracted from the UW Options Analys
 | GEX Pinning (opex week) | 1% of portfolio | 0.5% max loss | ~60-65% |
 | Squeeze Setup (catalyst needed) | 1% of portfolio | 1% max loss | ~15-20% (5x+ when right) |
 | Unconfirmed / single signal | 0.5% of portfolio | 0.5% max loss | Variable |
+| IV Skew Anomaly (contrarian) | 2% of portfolio | 1% max loss | ~35-45% (skew-confirmed) |
 
 **Golden rule:** Never size a binary-event trade >1% of portfolio.
 

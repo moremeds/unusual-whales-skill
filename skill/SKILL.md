@@ -116,6 +116,8 @@ Compute the 4-bucket composite score:
 
 **Critical: Use the LIVE price (from page title) for GEX analysis, not the GEX spot price.** The GEX data date may lag by 1-3 days, but the price has moved.
 
+**Opex Pinning Detection:** Check if current date is within 3 calendar days of monthly opex (3rd Friday). If opex week + large gamma concentration at nearby strike → flag "GEX Pinning likely" and note expected pin range (max-gamma strike ± 1%). See `analysis-framework.md` → "Opex Pinning Detection" for logic.
+
 **Bucket failure handling:** If a bucket is unavailable, set its score to 0 and re-weight remaining buckets to maintain ±100 scale. See `analysis-framework.md` for re-weighting formula.
 
 Map total score (after re-weighting if needed):
@@ -158,7 +160,9 @@ Strike anchors: Use GEX resistance walls as call spread targets, GEX support wal
 
 **Always generated.** Uses the VRP state from Phase 1.5. See `references/vrp-put-selling.md` for full framework.
 
-1. **Check entry conditions:** VRP z-score > 0.5, IV percentile > 30, regime not R2, term structure not inverted, no earnings within 14d
+1. **Check entry conditions:** VRP z-score > 0.5, IV percentile > 30, regime not R2, term structure not inverted, no earnings within 14d, GEX not deeply negative
+   - **GEX gate:** If net GEX < 0 AND flip point > price by >2%, override VRP signal to CAUTION even if other conditions pass (see `vrp-put-selling.md` → "GEX Negative Gate")
+   - **PCR confluence:** If PCR > 1.2 (elevated_fear or extreme_fear), note "puts expensive, favorable to sell" in VRP output (see `vrp-put-selling.md` → "PCR Confluence")
 2. **If ALL conditions pass → generate put credit spread:**
    - Select delta from VRP level + regime table (see vrp-put-selling.md § Delta & DTE Selection)
    - Anchor strike at GEX support wall (from Phase 1 GEX data)
@@ -346,6 +350,7 @@ For each candidate that passed S2, navigate to their individual UW pages and cla
 | D | Squeeze Candidate | SI >20% + utilization >90% + DTC >5 | Shorts |
 | E | Dark Pool Accumulation | 3+ prints >$1M at similar price level in 5 days | Dark Pool |
 | F | Multi-Signal Confluence | 2+ of types A-E overlap for same ticker | (composite) |
+| G | IV Skew Anomaly | Skew cross-sectional z-score > 1.5 | Volatility API `[~RR_PROXY]` |
 
 **For each classified candidate, extract:**
 - Current price (from page header)
@@ -353,10 +358,32 @@ For each candidate that passed S2, navigate to their individual UW pages and cla
 - GEX flip point relative to price (from GEX page)
 - Key metric for the setup type (e.g., implied move for Type A, SI% for Type D)
 
+**S3.1: Signal Layer Extraction (after classification)**
+
+Run scan signal layers for all classified candidates. See `references/scan-playbook.md` → "Scan Signal Layers" and `references/extraction-strategies.md` → "Scan-Mode Signal Extraction" for details.
+
+1. **IV Skew (Step S-Skew):** For each candidate, fetch `/api/volatility/risk_reversal_skew/{T}?expiry={E}` via `browser_evaluate` (API-only, no page nav). Compute cross-sectional z-scores within the batch. Apply earnings/regime/liquidity gates. Flag as `[~RR_PROXY]`.
+2. **PCR Sentiment (Step S-PCR):** Compute from net-prem-expiry data (already fetched or fetch now). PCR = sum(put_volume) / sum(call_volume). Apply fixed thresholds: >1.5 extreme_fear, >1.2 elevated_fear, <0.5 complacent. No extra page nav needed.
+3. **GEX Context (Step S-GEX):** For **top 5-8 candidates only**, navigate to `/stock/{T}/greek-exposure` and extract GEX flip, net GEX sign, max-gamma strike. GEX scoring flags apply only to QQQ/SPY/IWM and mega-caps (market cap >$100B); informational for others.
+
+**S3.2: 2-Tier Scoring**
+
+Apply the 2-tier scoring system (see `references/scan-playbook.md` → "2-Tier Scan Scoring"):
+- **Tier 1:** Flow Conviction Score (0-5, unchanged)
+- **Tier 2:** Confirmation Flags from signal layers (✅ ⚠ 🛑 🔥)
+
+Output format: `AAPL 4/5 ✅✅🔥` — flow score plus colored flags.
+
+**Filtering logic:**
+- Score 4+ with no red flags → proceed to final output
+- Score 4+ with amber flags → proceed with caution note
+- Score 4+ with 🛑 red block → DOWNGRADE: do not classify as high-conviction
+- Score 3 with multiple ✅ green flags → UPGRADE: proceed (multi-signal confluence)
+
 **Optimization:** Batch page visits — if multiple candidates need GEX data, visit GEX pages in sequence rather than alternating between page types.
 
-**`--scan` (quick) limit:** Visit at most 5 candidates' individual pages. Prioritize by conviction score, then premium size.
-**`--scan --full` limit:** Visit at most 12 candidates' individual pages.
+**`--scan` (quick) limit:** Visit at most 5 candidates' individual pages for GEX. Prioritize by conviction score, then premium size.
+**`--scan --full` limit:** Visit at most 12 candidates' individual pages for GEX.
 
 ### Phase S4: Scan Output
 
@@ -367,7 +394,11 @@ For each candidate that passed S2, navigate to their individual UW pages and cla
    - Candidates table: ticker, setup type(s), conviction score, key metric, current price
    - Top pick deep-dive (if any Type F multi-signal confluence found): 3-4 sentence summary with entry thesis
 
-2. **Discord delivery** — Send as **3 embeds** (not 5 — scan mode is more compact):
+2. **Discord delivery** — Send as **4 embeds** (scan mode):
+   - Embed 1: Scan Summary
+   - Embed 2: Setup Candidates Table (with 2-tier scores: `AAPL 4/5 ✅✅🔥`)
+   - Embed 3: Top Pick Deep-Dive (optional — only if Type F or 5/5 candidate)
+   - Embed 4: Signal Layer Matrix — skew z-score, PCR, GEX for all candidates (always sent)
    - See `references/discord-delivery.md` → "Scan Mode Embeds" section for templates
    - Use the same webhook URL and sending method as single-ticker mode
    - Color: use `0x3498db` (blue) for scan reports (not directional)
@@ -376,8 +407,8 @@ For each candidate that passed S2, navigate to their individual UW pages and cla
    ```
    ✅ UW Scan complete — {DATE} {TIME} ET
    Screened: {N_SCREENED} | Passed filter: {N_PASSED} | Classified: {N_CLASSIFIED}
-   Top setups: {TICKER1} (Type {X}, {SCORE}/5), {TICKER2} (Type {Y}, {SCORE}/5), ...
-   Report sent to Discord (3/3 embeds)
+   Top setups: {TICKER1} (Type {X}, {SCORE}/5 {FLAGS}), {TICKER2} (Type {Y}, {SCORE}/5 {FLAGS}), ...
+   Report sent to Discord (4/4 embeds)
    ```
 
 4. **If no candidates survive S2:** Skip Discord, just report in conversation:
@@ -436,5 +467,7 @@ For each candidate that passed S2, navigate to their individual UW pages and cla
 - [x] Payoff visualization — Chart.js payoff diagrams via Playwright screenshot + Discord image embed
 - [ ] Enhanced Discord — chart thumbnails, embed author icon
 - [x] `--scan` flag — daily scan mode with universe scanning, conviction filter, setup classification
+- [x] Scan signal layers — IV skew (Type G), PCR sentiment, GEX context with 2-tier scoring
+- [x] Single-ticker enhancements — skew labels, PCR labels, GEX gate for VRP, opex pinning detection
 - [ ] Multi-ticker batch — `/unusual-whales SPY,QQQ,IWM`
 - [ ] Historical score tracking — DuckDB persistence for trend analysis
