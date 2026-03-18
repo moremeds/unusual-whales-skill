@@ -285,6 +285,24 @@ opex_window = abs((today - third_friday).days) <= 3
 
 **Max-gamma strike:** The strike with highest absolute GEX value from the GEX chart data.
 
+## Phase 2.5 Override Conditions
+
+After scoring, Phase 2.5 (Signal Synthesis) checks for patterns where the AI should flag an adjustment to the rule-based trade selection. See `ai-reasoning.md` for full framework.
+
+**Override precedence ladder** (used by Phase 3, highest priority first):
+1. Hard safety gates (never unbounded risk)
+2. VRP CAUTION/stop rules from 3B
+3. Existing backwardation → calendar spread/avoid rule
+4. Phase 2.5 override flags:
+   - `event_risk_override` — bullish score + deeply inverted term structure (ratio > 1.10)
+   - `hidden_directional_edge` — neutral score but VRP + flow + GEX all align
+   - `thin_conviction` — strong score driven by single bucket, others flat (< ±5)
+   - `iv_mismatch` — IV rank extreme (>90 or <10) creates strategy mismatch
+5. Quality grade gating: Grade C → default 3A to "Wait for setup" unless abs(score) >= 60
+6. Normal strategy table selection
+
+**Quality gate applies ONLY to 3A (directional trade).** VRP assessment (3B) always runs independently.
+
 ## Trade Idea Generation
 
 ### Strategy Selection Matrix

@@ -34,11 +34,13 @@ color_map = {
 
 ## Embed 1: Summary + Key Metrics
 
+**`description` uses Phase 3.6 narrative executive summary** (max 400 chars). This should connect signals into a coherent narrative, not list metrics. Truncate at sentence boundary if over budget.
+
 ```json
 {
   "embeds": [{
     "title": "{TICKER} — ${PRICE} — {RECOMMENDATION}",
-    "description": "{EXECUTIVE_SUMMARY with **bold** markdown}",
+    "description": "{PHASE_3_6_EXECUTIVE_SUMMARY with **bold** markdown}",
     "color": "{COLOR_INT}",
     "fields": [
       {"name": "Score", "value": "{SCORE_SIGNED}/100", "inline": true},
@@ -81,6 +83,8 @@ color_map = {
 }
 ```
 
+**Phase 3.6 risk callout:** If Phase 3.6 produced a market structure risk callout, add `{"name": "Note", "value": "{RISK_CALLOUT_MKT}", "inline": false}` as the last field. **If no callout was produced, completely omit this field from the fields array** — do NOT include it with empty value (Discord rejects empty field values with 400).
+
 ## Embed 3: Volatility
 
 ```json
@@ -103,6 +107,8 @@ color_map = {
   }]
 }
 ```
+
+**Phase 3.6 risk callout:** If Phase 3.6 produced a volatility risk callout, add `{"name": "Note", "value": "{RISK_CALLOUT_VOL}", "inline": false}` as the last field. **If no callout, completely omit** — never include with empty value.
 
 ## Embed 4: Flow & Positioning (Merged)
 
@@ -128,6 +134,8 @@ color_map = {
 }
 ```
 
+**Phase 3.6 risk callout:** If Phase 3.6 produced a flow/positioning risk callout, add `{"name": "Note", "value": "{RISK_CALLOUT_FLOW}", "inline": false}` as the last field. **If no callout, completely omit** — never include with empty value.
+
 **Notes on Embed 4:**
 - OI Changes code block is capped at **top 3 strikes** to avoid exceeding 1024-char field limit
 - All Positioning fields are marked with `[T+1]` badge
@@ -144,7 +152,7 @@ Now also includes PCR sentiment and GEX regime context for put-selling assessmen
   "embeds": [{
     "title": "📊 VRP Assessment — {VRP_SIGNAL}",
     "color": "{COLOR_INT}",
-    "description": "{VRP_SUMMARY_1_2_SENTENCES}",
+    "description": "{VRP_SUMMARY_1_2_SENTENCES}{IF_VRP_QUALIFIER: \\n\\n⚠ {PHASE_3_6_VRP_QUALIFIER}}",
     "fields": [
       {"name": "VRP", "value": "{VRP_RAW}% (IV {IV}% − RV {RV}%)", "inline": true},
       {"name": "Z-Score", "value": "{VRP_Z} ({VRP_LABEL})", "inline": true},
@@ -174,6 +182,14 @@ Now also includes PCR sentiment and GEX regime context for put-selling assessmen
 
 ## Embed 6: Trade Idea + Management
 
+**Conditional inclusion based on Phase 3 outcome:**
+- **3A trade + VRP SELL** → show both (or merged if VRP-enhanced bull put)
+- **3A trade + VRP DO NOT SELL** → show directional trade only
+- **3A "Wait" + VRP SELL** → show VRP trade only (skip payoff for directional)
+- **3A "Wait" + VRP DO NOT SELL** → **omit Embed 6 entirely** (skip payoff too)
+
+**Reasoning field uses Phase 3.6 narrative** (max 600 chars) — not template text. This should be a coherent narrative tying the trade to the analysis, referencing specific GEX levels, IV data, and flow signals.
+
 ```json
 {
   "embeds": [{
@@ -187,7 +203,7 @@ Now also includes PCR sentiment and GEX regime context for put-selling assessmen
       {"name": "R:R", "value": "{RATIO}:1", "inline": true},
       {"name": "IV at Entry", "value": "~{IV}% (rank {IV_RANK})", "inline": true},
       {"name": "\u200b", "value": "\u200b", "inline": true},
-      {"name": "Reasoning", "value": "{REASONING_TIED_TO_GEX_AND_ANALYSIS}", "inline": false},
+      {"name": "Reasoning", "value": "{PHASE_3_6_TRADE_REASONING}", "inline": false},
       {"name": "📋 Management Plan", "value": "• **Take profit:** ${TP_PRICE} ({TP_PCT}% of max profit)\n• **Stop loss:** ${SL_PRICE} ({SL_PCT}% of debit)\n• **GEX stop:** Close if {TICKER} closes {ABOVE/BELOW} ${GEX_LEVEL}\n• **Time stop:** Review {DATE_21DTE} (21 DTE) · Close by {DATE_7DTE} (7 DTE)", "inline": false}
     ],
     "footer": {"text": "⚠ Verify bid/ask & OI at broker • Defined-risk only • Not financial advice"}
@@ -284,6 +300,17 @@ print(f"Discord: {success}/{len(results)} calls ({embed_count} embeds sent)")
 | Total embed size | ~6000 chars |
 | Embeds per message | 10 |
 | Payload size | 8 MB |
+
+**AI Content Character Budgets (Phase 3.6):**
+
+| Content | Max Chars | Location |
+|---------|-----------|----------|
+| Executive summary | 400 | Embed 1 `description` |
+| Trade reasoning | 600 | Embed 6 `Reasoning` field |
+| Risk callout (each) | 120 | Embeds 2/3/4 `Note` field |
+| VRP qualifier | 200 | Embed 5 `description` (appended) |
+
+If over budget, truncate at sentence boundary. Max 1 risk callout per embed. **If no callout content exists for an embed, completely omit the "Note" field** — never include with empty value (Discord returns 400).
 
 **Truncation rules:**
 - If description > 4096: truncate at last sentence boundary

@@ -144,9 +144,42 @@ Map total score (after re-weighting if needed):
 - **SELL:** -59 to -20
 - **STRONG SELL:** -100 to -60
 
+### Phase 2.5: Signal Synthesis
+
+Load `references/ai-reasoning.md` for reasoning framework.
+
+With all extracted data and bucket scores in context, reason through:
+
+1. **Confluence:** Which signals reinforce each other? Which contradict?
+2. **Quality:** Grade this setup A/B/C based on conviction alignment across *available* buckets (not total — in `--fast` mode with 2 buckets, A is achievable if both align)
+3. **Overrides:** Check override conditions — if any trigger, note the adjustment for Phase 3
+4. **Risks:** Identify 2-3 setup-specific risks (not generic disclaimers)
+
+Produce the `ReasoningState` structure (see `ai-reasoning.md`). Phase 3 consumes `override_flags` and `grade`. Phase 3.6 consumes the full state.
+
+Do NOT output this reasoning to the user — it feeds into later phases.
+
 ### Phase 3: Trade Idea Generation
 
 **Two trade ideas are generated: a directional trade (from composite score) AND a VRP put-selling assessment.**
+
+**Before selecting strategy for 3A (directional trade):** Check Phase 2.5 `ReasoningState`.
+
+**Override precedence ladder** (highest priority first):
+1. Hard safety gates (never unbounded risk) — unchanged
+2. VRP CAUTION/stop rules from 3B — unchanged
+3. Existing backwardation → calendar spread/avoid rule — unchanged
+4. Phase 2.5 override flags (`event_risk_override`, `thin_conviction`, `iv_mismatch`, `hidden_directional_edge`)
+5. Quality grade gating: If grade is **C**, default 3A to "Wait for setup" unless recommendation is STRONG BUY/SELL (abs(score) >= 60)
+6. Normal strategy table selection
+
+**Important:** Quality gate applies ONLY to 3A (directional trade). VRP assessment (3B) always runs independently regardless of grade. Output combinations:
+- 3A trade + VRP SELL → both embeds as normal (or merged if VRP-enhanced bull put)
+- 3A trade + VRP DO NOT SELL → Embed 6 shows directional trade only
+- 3A "Wait" + VRP SELL → Embed 6 shows VRP trade only, skip payoff for directional
+- 3A "Wait" + VRP DO NOT SELL → omit Embed 6 entirely, skip payoff
+
+Note any adjustment reason — it will appear in the trade idea's Reasoning field via Phase 3.6.
 
 #### 3A: Directional Trade (Composite Score)
 
@@ -231,6 +264,23 @@ Load `references/payoff-visualization.md` for Black-Scholes code, strategy formu
 
 6. **Navigate back** to UW page (or close the local file tab) so the browser is clean for any subsequent operations.
 
+### Phase 3.6: Narrative Synthesis
+
+Load `references/ai-reasoning.md` § Post-Trade Synthesis.
+
+Using Phase 2.5 `ReasoningState` + Phase 3 trade idea + all extracted data:
+
+1. **Rewrite executive summary** — Connect signals into a coherent narrative (3-4 sentences, max 400 chars). Lead with the most important insight. Avoid listing metrics — explain what they mean together.
+2. **Write trade reasoning** — For Embed 6's "Reasoning" field (max 600 chars), explain why this specific trade at these strikes makes sense given the analysis. Reference specific signals. If 3A is "Wait" + VRP SELL, write reasoning for the VRP trade.
+3. **Add risk callouts** — max 1 per embed, max 120 chars each. Only produce if there's a genuine risk. Blend into relevant embeds:
+   - Market Structure embed: structural risk (e.g., "Negative gamma zone — moves below $175 amplify")
+   - Volatility embed: vol risk (e.g., "Backwardated term structure signals near-term event risk")
+   - Flow embed: positioning risk (e.g., "Single-day flow — confirm with tomorrow's OI data")
+   - **If no risk applies for an embed, produce nothing** — the "Note" field will be omitted entirely from that embed
+4. **VRP qualifier** — If Phase 2.5 flagged concerns that affect the VRP signal, add a brief qualifier to Embed 5's description. If no concerns, skip.
+
+These outputs replace the template-style text in Phase 4 formatting. Character budgets are hard limits — truncate at sentence boundary if over.
+
 ### Phase 4: Output
 
 Format the full report text internally, but **display only a brief summary in the conversation:**
@@ -240,14 +290,14 @@ Format the full report text internally, but **display only a brief summary in th
 
 Full report sections (used by Discord delivery):
 1. **Header:** ticker, LIVE price, data date, score bar, recommendation
-2. **Executive summary:** 3-4 sentences synthesizing key findings (include VRP signal if actionable)
+2. **Executive summary:** Phase 3.6 narrative synthesis (3-4 sentences connecting signals, not listing them). Include VRP signal if actionable.
 3. **Market Structure:** GEX table (walls + flips relative to LIVE price), dealer positioning, vanna/charm bias
 4. **Volatility:** IV rank, IV-HV spread, skew (with actual 25d put/call IVs), term structure, vol regime, implied moves
 5. **Flow:** Net premium, C/P ratio, dark pool conviction + print count
 6. **Positioning [T+1]:** OI change bias (top 3 strikes table), short interest (ratio + σ-relative label), squeeze risk (utilization + DTC)
 7. **VRP Put-Selling Assessment:** VRP raw, z-score, regime proxy, signal (SELL/DO NOT SELL), put credit spread details if signal is SELL, or reason if not
 8. **Score breakdown:** Per-bucket scores with visual bars (4 buckets)
-9. **Trade ideas:** Directional trade (from composite score) + VRP put credit spread (if conditions met). If VRP merged with directional → single "VRP-enhanced" trade
+9. **Trade ideas:** Directional trade (from composite score) + VRP put credit spread (if conditions met). If VRP merged with directional → single "VRP-enhanced" trade. **Reasoning field** uses Phase 3.6 narrative (not template text). If 3A is "Wait" + VRP SELL, show VRP trade only. If both "Wait" + "DO NOT SELL", omit Embed 6 entirely.
 10. **Payoff diagram:** Chart.js visualization of P&L curve (if Phase 3.5 generated one)
 11. **Footer:** Data date caveat, T+1 badge on positioning, risk disclaimer
 
@@ -486,5 +536,6 @@ Output format: `AAPL 4/5 ✅✅🔥` — flow score plus colored flags.
 - [x] `--scan` flag — daily scan mode with universe scanning, conviction filter, setup classification
 - [x] Scan signal layers — IV skew (Type G), PCR sentiment, GEX context with 2-tier scoring
 - [x] Single-ticker enhancements — skew labels, PCR labels, GEX gate for VRP, opex pinning detection
+- [x] AI reasoning — Phase 2.5 signal synthesis + Phase 3.6 narrative synthesis, override conditions, quality gating
 - [ ] Multi-ticker batch — `/unusual-whales SPY,QQQ,IWM`
 - [ ] Historical score tracking — DuckDB persistence for trend analysis
