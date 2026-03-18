@@ -436,6 +436,97 @@ else:
 - vrp_rank < 0.2 → approximate z-score ~-0.3 (possibly inverted)
 Mark VRP section with `[~APPROX]` badge when using fallback.
 
+### Step 3.1: Multi-Expiry Flow Breakdown (on Net Premium Page)
+
+**Runs immediately after Step 3 (Net Premium).** No additional navigation needed — computes per-expiry breakdown from already-fetched data.
+
+**When `--fast` mode is active (pages 3-6 skipped), `ExpiryFlowBreakdown` is `null`** — the concentration signal is unavailable, Embed 4 uses existing format, and persistence stores `null` for expiry flow fields.
+
+**Important:** This data must be fetched via `browser_evaluate` on the Net Premium page (not a standalone `fetch()`) to inherit the browser's auth cookies and get live data — consistent with the REST API prohibition in the General Strategy section.
+
+```js
+// Extract per-expiry flow breakdown from net-prem-expiry data
+// Run via browser_evaluate while on /stock/{TICKER}/net-premium page
+(ticker) => {
+  // Use same date param as main flow extraction for consistency
+  const dateParam = new Date().toISOString().slice(0, 10);
+  return fetch(`https://phx.unusualwhales.com/api/stock/${ticker}/net-prem-expiry?date=${dateParam}`)
+    .then(r => r.json())
+    .then(data => {
+      if (!Array.isArray(data) || data.length === 0) return { error: 'No expiry data' };
+
+      // Normalize to calendar dates to avoid timezone off-by-one
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
+      const [ty, tm, td] = todayStr.split('-').map(Number);
+      const todayMs = Date.UTC(ty, tm - 1, td);
+      const entries = data.map(d => {
+        const [ey, em, ed] = d.expiry.split('-').map(Number);
+        const expiryMs = Date.UTC(ey, em - 1, ed);
+        const dte = Math.ceil((expiryMs - todayMs) / (1000 * 60 * 60 * 24));
+        const callPrem = parseFloat(d.call_premium || 0);
+        const putPrem = parseFloat(d.put_premium || 0);
+        const netPrem = parseFloat(d.net_prem || 0);
+        return {
+          expiry: d.expiry,
+          dte,
+          net_prem: netPrem,
+          call_prem: callPrem,
+          put_prem: putPrem,
+          direction: netPrem > 0 ? 'bullish' : netPrem < 0 ? 'bearish' : 'neutral'
+        };
+      });
+
+      // Sort by absolute net_prem descending, take top 3
+      const sorted = [...entries].sort((a, b) => Math.abs(b.net_prem) - Math.abs(a.net_prem));
+      const top3 = sorted.slice(0, 3);
+
+      // Total absolute premium for % calculation
+      const totalAbsPrem = entries.reduce((s, e) => s + Math.abs(e.net_prem), 0);
+
+      const withPct = top3.map(e => ({
+        ...e,
+        pct_of_total: totalAbsPrem > 0
+          ? parseFloat((Math.abs(e.net_prem) / totalAbsPrem * 100).toFixed(1))
+          : 0
+      }));
+
+      // Concentration check: >60% in one expiry
+      const concentrated = withPct.length > 0 && withPct[0].pct_of_total > 60;
+
+      return {
+        top_expirations: withPct,
+        concentrated,
+        concentration_expiry: concentrated ? withPct[0].expiry : null,
+        concentration_dte: concentrated ? withPct[0].dte : null,
+        total_premium: totalAbsPrem,
+        source: 'net-prem-expiry'
+      };
+    })
+    .catch(e => ({ error: e.message, source: 'api_error' }));
+}
+```
+
+**Post-extraction: Store as `ExpiryFlowBreakdown`:**
+```
+ExpiryFlowBreakdown {
+  top_expirations: [{
+    expiry: string,
+    dte: integer,
+    net_prem: number,
+    call_prem: number,
+    put_prem: number,
+    direction: "bullish" | "bearish" | "neutral",
+    pct_of_total: number
+  }],
+  concentrated: boolean,  // >60% in one expiry
+  concentration_expiry: string | null,
+  concentration_dte: integer | null
+}
+```
+
+**Scoring integration:** If flow is concentrated in a single near-term expiry (DTE < 14), add +2 to flow conviction (institutional urgency). If concentrated in far-term (DTE > 45), neutral (longer-term positioning). Feed `concentrated` flag into Phase 2.5 for AI reasoning.
+
 ### Step 4: OI Changes Page
 
 Navigate to `/stock/{TICKER}/open-interest-changes`, wait 3-4s (add 1-3s random jitter), then extract:

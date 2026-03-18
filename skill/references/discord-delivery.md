@@ -124,7 +124,7 @@ color_map = {
       {"name": "Dark Pool", "value": "{DP_PREMIUM_FORMATTED} ({DP_PRINT_COUNT} prints) {DP_SIGNAL}", "inline": true},
       {"name": "\u200b", "value": "\u200b", "inline": true},
       {"name": "\u200b", "value": "\u200b", "inline": true},
-      {"name": "Top Expiries (Net Premium)", "value": "```\n{EXP1}  {PREM1}\n{EXP2}  {PREM2}\n{EXP3}  {PREM3}\n```", "inline": false},
+      {"name": "Top Expiries (Net Premium)", "value": "{SEE_BELOW}", "inline": false},
       {"name": "Short Interest [T+1]", "value": "Ratio: **{SI_RATIO}%** ({SI_RELATIVE_LABEL}) | DTC: {DTC}d\nShares avail: {SHARES_AVAIL}", "inline": false},
       {"name": "OI Changes [T+1]", "value": "```\nStrike │ Call OI Δ │ Put OI Δ\n───────┼───────────┼──────────\n{S1}   │ {C_OI_1}  │ {P_OI_1}\n{S2}   │ {C_OI_2}  │ {P_OI_2}\n{S3}   │ {C_OI_3}  │ {P_OI_3}\n```\nBias: {OI_DIRECTION}", "inline": false},
       {"name": "Squeeze Risk [T+1]", "value": "{SQUEEZE_LABEL} (utilization: {UTIL}%)", "inline": false}
@@ -133,6 +133,15 @@ color_map = {
   }]
 }
 ```
+
+**Top Expiries field conditional formatting:**
+- **If `ExpiryFlowBreakdown` is available** (not `--fast` mode): render each available expiry row with DTE, direction, premium, and % of total. Only render rows that exist (may be 1-3). If concentrated (>60% in one expiry), append `⚡ {PCT}% concentrated in {EXP} ({DTE} DTE)`:
+  ```
+  {EXP1} ({DTE1} DTE) {DIR1} {PREM1} ({PCT1}%)
+  {EXP2} ({DTE2} DTE) {DIR2} {PREM2} ({PCT2}%)    ← only if exists
+  {EXP3} ({DTE3} DTE) {DIR3} {PREM3} ({PCT3}%)    ← only if exists
+  ```
+- **If `ExpiryFlowBreakdown` is `null`** (`--fast` mode or extraction failed): use the original format without DTE/direction/% — just expiry and premium: `{EXP1}  {PREM1}`
 
 **Phase 3.6 risk callout:** If Phase 3.6 produced a flow/positioning risk callout, add `{"name": "Note", "value": "{RISK_CALLOUT_FLOW}", "inline": false}` as the last field. **If no callout, completely omit** — never include with empty value.
 

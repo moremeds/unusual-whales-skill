@@ -21,10 +21,13 @@ Analyze options data from Unusual Whales for any ticker: dealer positioning (GEX
 ## Invocation
 
 ```
-/unusual-whales TSLA                  # Single-ticker deep analysis
-/unusual-whales SPY --fast            # GEX + Volatility only (~30s)
-/unusual-whales --scan                # Daily scan: Deep Conviction + GEX + Squeeze candidates
-/unusual-whales --scan --full         # Full scan: all 6 signal tiers + OI buildup + dark pool
+/unusual-whales TSLA                          # Single-ticker analysis
+/unusual-whales TSLA,NVDA,AAPL               # Batch analysis (shared context)
+/unusual-whales --watchlist core              # Predefined watchlist batch
+/unusual-whales --scan                        # Scan mode (unchanged)
+/unusual-whales --scan --analyze-top 3        # Scan → auto-batch top 3
+/unusual-whales SPY --fast                    # Fast mode (GEX + Vol only)
+/unusual-whales TSLA,NVDA --fast              # Batch + fast mode
 ```
 
 ## Workflow
@@ -34,29 +37,94 @@ Analyze options data from Unusual Whales for any ticker: dealer positioning (GEX
 **Authentication is the FIRST step. Do not skip this.**
 
 1. Parse flags from the user's message:
-   - `--scan` flag → **Scan Mode** (with optional `--full`). Skip ticker parsing. After auth check, proceed to **Phase S1** (below).
-   - Ticker symbol (first argument) → **Single-Ticker Mode**. Continue with Phase 1-5 as normal.
-   - `--fast` flag → skip pages 3-6 (Flow + Positioning) in single-ticker mode.
-2. If `--scan` without `--full`: quick scan (Deep Conviction + GEX + Squeeze only — ~3-5 min)
+   - `--scan` flag → **Scan Mode** (with optional `--full`, `--analyze-top N`). Skip ticker parsing. After auth check, proceed to **Phase S1** (below).
+   - Ticker symbol (first argument) → parse `ticker_list` (see below). Continue with Phase 0.5 → batch loop.
+   - `--watchlist {name}` → load watchlist from `references/batch-mode.md`. If no name given, default to `"core"`.
+   - `--fast` flag → skip pages 3-6 (Flow + Positioning). Compatible with batch mode.
+2. **Parse `ticker_list`:**
+   - If comma-separated → split into list, deduplicate: `["TSLA", "NVDA", "AAPL"]`
+   - If `--watchlist {name}` → load from `references/batch-mode.md` watchlist definitions
+   - If `--scan --analyze-top N` → set `scan_then_batch = true`, `batch_top_n = N`
+   - Single ticker → `ticker_list = ["{TICKER}"]`
+   - Set `batch_mode = len(ticker_list) > 1 or scan_then_batch`
+   - Set `batch_id = UUID if batch_mode, else null`
+3. If `--scan` without `--full`: quick scan (Deep Conviction + GEX + Squeeze only — ~3-5 min)
    If `--scan --full`: full scan (all 6 signal tiers + OI buildup + dark pool — ~8-12 min)
-3. **Check if Chrome is running** via `pgrep -f "Google Chrome"`
+4. **Check if Chrome is running** via `pgrep -f "Google Chrome"`
    - **If running** → tell user: "Please close Chrome (Cmd+Q) — Playwright needs exclusive access to the Chrome profile." **STOP and wait** for user to confirm Chrome is closed.
    - **If not running** → proceed
-4. **Resync Chrome profile** to the Playwright copy: `rsync -a --delete "~/Library/Application Support/Google/Chrome/" "~/Library/Application Support/Google/Chrome-Playwright/"` — ensures latest cookies/session are available
-5. Resize browser to 1440x900 minimum
-5. Navigate to `https://unusualwhales.com/stock/{TICKER}/greek-exposure`
-6. Wait 3-4 seconds for page to hydrate (check page title contains ticker + price)
-7. **Auth check** (in priority order — use the FIRST signal that matches):
+5. **Resync Chrome profile** to the Playwright copy: `rsync -a --delete "~/Library/Application Support/Google/Chrome/" "~/Library/Application Support/Google/Chrome-Playwright/"` — ensures latest cookies/session are available
+6. Resize browser to 1440x900 minimum
+7. Navigate to `https://unusualwhales.com/stock/{TICKER}/greek-exposure` (in batch mode, use the first ticker in `ticker_list` for auth check)
+8. Wait 3-4 seconds for page to hydrate (check page title contains ticker + price)
+9. **Auth check** (in priority order — use the FIRST signal that matches):
    - `status` element showing "Current price XXX.XX" → **authenticated** (live data)
    - Banner saying "You are currently viewing data from 2 days ago" → **NOT authenticated**
    - No `status` element AND no "2 days ago" banner → check GEX spot `time` field: if data date = last trading day → authenticated; if data date < last trading day - 1 → NOT authenticated
    - Do NOT rely on "Sign in" link presence — it can appear for both authenticated and unauthenticated users
-8. **If NOT authenticated:**
+10. **If NOT authenticated:**
    - Tell the user: "Please open Chrome, log into unusualwhales.com, close Chrome, then let me know when done."
    - Do NOT navigate to `/login` in Playwright — the user logs in via their regular Chrome browser
    - **STOP and wait** — do NOT proceed with data extraction until user confirms login
-   - After user confirms, re-check that Chrome is closed (step 3), then navigate to the GEX page and re-check auth
-9. **If authenticated:** Extract current price from page header `status` element (e.g., "Current price 178.03") or from page title as fallback
+   - After user confirms, re-check that Chrome is closed (step 4), then navigate to the GEX page and re-check auth
+11. **If authenticated:** Extract current price from page header `status` element (e.g., "Current price 178.03") or from page title as fallback
+
+### Phase 0.5: Shared Market Context (Batch Only)
+
+**Skip this phase if single-ticker mode (ticker_list has 1 entry).**
+
+Load `references/batch-mode.md` for sector ETF mapping and SharedContext structure.
+
+Extract shared context once for the entire batch:
+
+1. **SPY Context** — Navigate to `/stock/SPY/greek-exposure`:
+   - GEX flip point, net gamma sign, top 3 gamma walls
+   - Price from page header
+
+2. **QQQ Context** — Navigate to `/stock/QQQ/greek-exposure`:
+   - Same as SPY
+
+3. **VIX Proxy** — From SPY volatility page (`/stock/SPY/volatility`):
+   - IV rank (proxy for market fear level)
+   - Term structure shape
+
+4. **Sector ETF Baselines** — For each unique sector represented in ticker_list:
+   - Look up sector ETF from mapping (e.g., TSLA → XLY, NVDA → XLK)
+   - Navigate to `/stock/{ETF}/greek-exposure` → GEX flip + sign
+   - Navigate to `/stock/{ETF}/volatility` → IV rank + skew direction
+   - ~15-20s per sector ETF (2 pages)
+   - Deduplicate: if multiple tickers share a sector, extract once
+
+**Reuse optimization:** If SPY or QQQ is in the ticker_list, their Phase 1 extraction will duplicate Phase 0.5 work. Phase 0.5 data is lightweight (GEX flip + sign only), while Phase 1 does full 6-page extraction — overlap is minimal. Phase 1 should NOT assume the browser is already on the right page after Phase 0.5.
+
+Store as `SharedContext` (see `references/batch-mode.md` for full structure). Each source includes `data_date` and `freshness` (`live` | `stale` | `unavailable`). Phase 2.5 must downweight or note stale shared-context inputs.
+
+**Time cost:** ~20s base (SPY + QQQ) + ~15-20s per unique sector. For 3 sectors: ~65-80s total. Front-loaded — per-ticker analysis is unchanged.
+
+---
+
+### Batch Execution Loop
+
+**For each ticker in ticker_list:**
+
+Run Phase 1 → 1.5 → 2 → 2.5 → 3 → 3.5 → 3.6 → 4 → 4.5 → 5 for this ticker.
+
+- Phase 2.5 receives SharedContext (if batch mode) for sector-relative analysis
+- Phase 4.5 persists to DuckDB with batch_id linking all tickers from this run
+- Phase 5 sends Discord embeds immediately (don't wait for other tickers)
+- Conversation output per ticker: 1-line confirmation
+- **Failure isolation:** If a ticker encounters a fatal error (Cloudflare, 404, ticker not found), output the error, skip remaining phases for that ticker, and continue the loop for the next ticker. Do not abort the entire batch.
+- **Context management:** After each ticker's Phase 5 completes, the intermediate extraction data for that ticker is no longer needed. Phase 4.5 captures it permanently. Only carry forward SharedContext and the running batch summary.
+
+After ALL tickers complete, output batch summary:
+```
+✅ Batch complete: {N}/{TOTAL} tickers analyzed
+{T1} ${P1} — {SCORE1}/100 — {REC1}
+{T2} ${P2} — {SCORE2}/100 — {REC2}
+{T3} ${P3} — {SCORE3}/100 — {REC3}
+```
+
+---
 
 ### Phase 1: Data Extraction (6 Pages)
 
@@ -308,6 +376,23 @@ Full report sections (used by Discord delivery):
 - `[T+1]` — prior close settlement data (positioning bucket)
 - `[N/A]` — section unavailable
 
+### Phase 4.5: Persistence
+
+Load `references/persistence.md` for schema and insert logic.
+
+After formatting the report (Phase 4), persist the full analysis state:
+
+1. **Create DB** if not exists at `~/Library/Application Support/unusual-whales/analyses.duckdb`
+2. **Write full state JSON to temp file** (`/tmp/uw-snapshot-{analysis_id}.json`) — use unique filename per analysis to prevent corruption in batch mode. Do NOT pass large JSON inline as a Bash argument
+3. **Insert `analyses` row** — all bucket scores, key metrics, grade, override flags
+4. **Insert `trades` rows** — one per trade idea (directional + VRP if applicable)
+5. **Insert `raw_snapshots` row** — full JSON blob of all extracted data, scores, reasoning, trade ideas
+
+If DuckDB/SQLite insert fails, log warning and continue — persistence is non-blocking.
+Generate UUID for analysis_id, reference batch_id from Phase 0 if batch mode.
+
+Do NOT output persistence details to user — it happens silently.
+
 ### Phase 5: Discord Delivery (Primary Output)
 
 **Discord is the PRIMARY output. Send the COMPLETE report as 6-7 rich embeds (7th is payoff chart if Phase 3.5 ran), then confirm in conversation.**
@@ -478,6 +563,26 @@ Output format: `AAPL 4/5 ✅✅🔥` — flow score plus colored flags.
    Report sent to Discord (4/4 embeds)
    ```
 
+### Scan-to-Batch Bridge
+
+**If `--analyze-top N` flag was set:**
+
+After scan Discord embeds are sent:
+
+1. Extract top N candidates from scan results, sorted by:
+   - Conviction score (descending)
+   - No 🛑 (red) flags
+   - Prefer Type F (multi-signal) candidates
+2. **Guard:** If fewer than N qualify after filtering, analyze those that do. **If zero candidates qualify, output "No candidates met criteria for batch analysis" and STOP** — do not proceed to batch.
+3. Build `ticker_list` from qualifying candidates
+4. Set `batch_mode = true`, generate `batch_id`
+5. Proceed to Phase 0.5 (Shared Market Context) → batch loop
+
+Conversation output between scan and batch:
+```
+Scan complete. Analyzing top {N} candidates: {T1}, {T2}, {T3}...
+```
+
 4. **If no candidates survive S2:** Skip Discord, just report in conversation:
    ```
    UW Scan complete — {DATE} {TIME} ET
@@ -526,16 +631,21 @@ Output format: `AAPL 4/5 ✅✅🔥` — flow score plus colored flags.
 ## Roadmap / Todo
 
 - [x] VRP put-selling assessment — VRP z-score, regime proxy, GEX-anchored put credit spreads, always-on by default
-- [ ] Earnings context block — avg historical moves, expected vs actual, EPS streak
-- [ ] Risk metrics — beta, Sharpe, 1σ range from /stock/{T}/risk page
-- [ ] Seasonality one-liner — current month's historical win rate + avg return
-- [ ] Official UW MCP Server — migrate from Playwright scraping to native MCP calls
-- [ ] `--deep` flag — multi-expiry OI, historical GEX, sector-relative flow
 - [x] Payoff visualization — Chart.js payoff diagrams via Playwright screenshot + Discord image embed
-- [ ] Enhanced Discord — chart thumbnails, embed author icon
 - [x] `--scan` flag — daily scan mode with universe scanning, conviction filter, setup classification
 - [x] Scan signal layers — IV skew (Type G), PCR sentiment, GEX context with 2-tier scoring
 - [x] Single-ticker enhancements — skew labels, PCR labels, GEX gate for VRP, opex pinning detection
 - [x] AI reasoning — Phase 2.5 signal synthesis + Phase 3.6 narrative synthesis, override conditions, quality gating
-- [ ] Multi-ticker batch — `/unusual-whales SPY,QQQ,IWM`
-- [ ] Historical score tracking — DuckDB persistence for trend analysis
+- [x] Multi-expiry flow breakdown (always-on)
+- [x] Batch mode with shared market context
+- [x] Sector ETF comparison (batch mode)
+- [x] Scan-to-batch pipeline (--analyze-top N)
+- [x] Full analysis persistence (DuckDB)
+- [ ] Automated outcome tracking (fetch price N days later, compare to trade idea)
+- [ ] Historical GEX trend (requires persistence — compute from saved snapshots)
+- [ ] Custom watchlist management (add/remove tickers via command)
+- [ ] Earnings context block — avg historical moves, expected vs actual, EPS streak
+- [ ] Risk metrics — beta, Sharpe, 1σ range from /stock/{T}/risk page
+- [ ] Seasonality one-liner — current month's historical win rate + avg return
+- [ ] Official UW MCP Server — migrate from Playwright scraping to native MCP calls
+- [ ] Enhanced Discord — chart thumbnails, embed author icon

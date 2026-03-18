@@ -53,7 +53,20 @@ Identify 2-3 risks **specific to this setup**. Not generic disclaimers. Examples
 - "Earnings in 8 days — IV crush will destroy debit spread value if held through"
 - "VRP elevated but GEX negative — premium selling into short-gamma environment"
 
-### 5. ReasoningState Output
+### 5. Sector-Relative Context (Batch Mode Only)
+
+When `SharedContext` is available (batch mode with `len(ticker_list) > 1`), add sector-relative analysis to the confluence map:
+
+**Sector Comparison** — Compare this ticker's signals against its sector ETF baseline:
+- Ticker GEX negative but sector ETF GEX positive → "Ticker-specific weakness, not sector-wide"
+- Ticker IV rank 80 but sector ETF IV rank 30 → "Elevated vol is ticker-specific, not sector fear"
+- Both ticker and sector showing bearish signals → "Sector-wide bearish pressure, not isolated"
+- Ticker and SPY/QQQ diverging → "Decorrelated from broad market"
+
+Add sector context to `confluence_summary` in ReasoningState.
+Example: "Bearish confluence confirmed — TSLA GEX negative while XLY (sector) also shows negative GEX, suggesting consumer discretionary sector-wide weakness, not just TSLA-specific."
+
+### 6. ReasoningState Output
 
 Produce this structured state for consumption by Phase 3 and Phase 3.6:
 
@@ -66,6 +79,7 @@ ReasoningState {
   override_flags: string[] (triggered override conditions from table above)
   key_risks: string[] (2-3 setup-specific risks)
   vrp_qualifier: string | null (concern affecting VRP signal, e.g., "GEX negative — premium selling risk")
+  sector_context: string | null  // Only populated in batch mode when SharedContext is available
 }
 ```
 

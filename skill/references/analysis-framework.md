@@ -192,7 +192,19 @@ darkpool_score = 0
 #   bullish (low PCR → sell). Weight accordingly in qualitative assessment.
 # Output: Include PCR label in Flow section and integrate with VRP Embed 5
 
-flow = clamp(premium_score + ratio_score + darkpool_score, -24, 24)
+# Expiry concentration signal (±2) — only when ExpiryFlowBreakdown is available (not --fast)
+concentration_score = 0
+if expiry_flow is not None and expiry_flow.concentrated and expiry_flow.concentration_dte < 14:
+    # Use the CONCENTRATED EXPIRY's own net_prem for direction, not aggregate
+    conc_expiry = expiry_flow.top_expirations[0]  # highest abs net_prem
+    if conc_expiry.net_prem > 0:
+        concentration_score = +2
+    elif conc_expiry.net_prem < 0:
+        concentration_score = -2
+    # If concentrated expiry is directionally ambiguous, score 0
+# Far-term concentration is informational only (no score adjustment)
+
+flow = clamp(premium_score + ratio_score + darkpool_score + concentration_score, -24, 24)
 ```
 
 ### Bucket 4: Positioning (±20 max) — NEW
