@@ -1,2 +1,7 @@
 node_modules/
 .DS_Store
+~/
+*.duckdb
+*.sqlite
+.env*
+config.yaml

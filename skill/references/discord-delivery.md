@@ -1,22 +1,25 @@
 # Discord Webhook Delivery
 
-Discord is the PRIMARY output channel. Send the COMPLETE report as **6-7 rich embeds** (7th is payoff chart image if Phase 3.5 ran), then show a brief confirmation in conversation.
+Discord is the SECONDARY output channel. Sends a **short summary** (1 embed) — the full report goes to email (see `email-delivery.md`).
 
 ## Webhook URL
 
+**Read from config:** `config["discord_webhook_url"]` (see `config.md`).
+
+**If webhook URL is empty or config missing → skip Discord delivery entirely.** Do NOT use any hardcoded URL. The user must run `--setup` to configure Discord.
+
+## Delivery Flow (Updated)
+
 ```
-https://discord.com/api/webhooks/1480254119590625360/3zxIB8w3ukYTK8K2DjC1SRUBHbVs9-VtWmodLRCo3f92EZ8qetjF_1aUMO7GcIR9gkrO
+Phase 4 (AnalysisReport) → Phase 5A (Email via Gmail MCP — FULL report)
+                         → Phase 5B (Discord — SHORT summary, 1 embed)
 ```
 
-## Delivery Flow
+Discord now receives **1 summary embed** (not 6-7). Email is the primary channel for the complete analysis.
 
-```
-Phase 4 (Format report) → Phase 5 (Send 1 batched webhook + 1 payoff image to Discord) → Brief confirmation in chat
-```
+**The legacy 6-embed format below is retained for reference** but the default delivery is the short summary from `email-delivery.md` → "Discord Summary" section.
 
-**⚡ PERFORMANCE:** All 6 text embeds are sent in a **single webhook call** (Discord allows 10 embeds per message). Only the payoff chart image (Embed 7) requires a separate `multipart/form-data` call. Total: **2 webhook calls max** (was 7). Saves ~7s.
-
-Discord gets the complete analysis as 6 structured embeds + 1 payoff chart image (when available). Conversation gets only: ticker, score, recommendation, VRP signal, 1-line summary, and delivery status.
+## Legacy 6-Embed Format (reference only — use email-delivery.md for current format)
 
 ## Color Mapping
 
@@ -247,7 +250,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 ```python
 import json, os, subprocess, time
 
-WEBHOOK = "https://discord.com/api/webhooks/1480254119590625360/3zxIB8w3ukYTK8K2DjC1SRUBHbVs9-VtWmodLRCo3f92EZ8qetjF_1aUMO7GcIR9gkrO"
+WEBHOOK = config["discord_webhook_url"]  # Read from ~/.config/unusual-whales/config.yaml
 
 # Build all 6 text embeds (fill in from analysis data)
 embeds = [embed1, embed2, embed3, embed4, embed5_vrp, embed6_trade]

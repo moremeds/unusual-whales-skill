@@ -20,15 +20,44 @@ Analyze options data from Unusual Whales for any ticker: dealer positioning (GEX
 
 ## Invocation
 
+### Analysis Commands
 ```
 /unusual-whales TSLA                          # Single-ticker analysis
 /unusual-whales TSLA,NVDA,AAPL               # Batch analysis (shared context)
 /unusual-whales --watchlist core              # Predefined watchlist batch
-/unusual-whales --scan                        # Scan mode (unchanged)
+/unusual-whales --scan                        # Scan mode
 /unusual-whales --scan --analyze-top 3        # Scan → auto-batch top 3
 /unusual-whales SPY --fast                    # Fast mode (GEX + Vol only)
 /unusual-whales TSLA,NVDA --fast              # Batch + fast mode
+/unusual-whales --regime                      # Market regime dashboard (~20s)
 ```
+
+### Intelligence Commands
+```
+/unusual-whales --brief                       # Weekly intelligence brief
+/unusual-whales --brief 14                    # Last 14 days
+/unusual-whales --calibrate                   # Signal accuracy per bucket
+/unusual-whales --history TSLA                # Past analyses for ticker
+/unusual-whales --history TSLA 50             # Last 50 analyses
+/unusual-whales --replay {ID}                 # Re-render stored analysis
+/unusual-whales --replay latest TSLA          # Most recent for ticker
+```
+
+### Management Commands
+```
+/unusual-whales --setup                       # First-time config (webhook, email)
+/unusual-whales --check                       # Process all pending outcomes
+/unusual-whales --alert TSLA vrp_zscore > 1.0 # Set condition alert
+/unusual-whales --alert list                  # Show active alerts
+/unusual-whales --alert clear TSLA            # Remove alerts for ticker
+/unusual-whales --help                        # Show all commands
+```
+
+### Config
+
+All user settings stored in `~/.config/unusual-whales/config.yaml`. Run `--setup` to create.
+Discord webhook URL is **NOT hardcoded** — must be configured via `--setup`.
+See `references/config.md` for schema and loading logic.
 
 ## Workflow
 
@@ -393,34 +422,68 @@ Generate UUID for analysis_id, reference batch_id from Phase 0 if batch mode.
 
 Do NOT output persistence details to user — it happens silently.
 
-### Phase 5: Discord Delivery (Primary Output)
+### Phase 5: Delivery (Email Primary + Discord Summary)
 
-**Discord is the PRIMARY output. Send the COMPLETE report as 6-7 rich embeds (7th is payoff chart if Phase 3.5 ran), then confirm in conversation.**
+**Two delivery channels.** Load `references/email-delivery.md` for HTML template and Gmail MCP integration. Load `references/config.md` for webhook URL and email config.
 
-**Webhook URL:** `https://discord.com/api/webhooks/1480254119590625360/3zxIB8w3ukYTK8K2DjC1SRUBHbVs9-VtWmodLRCo3f92EZ8qetjF_1aUMO7GcIR9gkrO`
+**Phase 5A: Email (PRIMARY) — Full rich HTML report via Gmail MCP**
+- Uses `gmail_create_draft` MCP tool to draft a rich HTML email
+- Contains ALL analysis sections: summary, market structure, volatility, flow, positioning, VRP, trade ideas, payoff diagram, earnings context
+- Subject: `UW Analysis: {TICKER} — ${PRICE} — {RECOMMENDATION} ({DATE})`
+- See `references/email-delivery.md` for full HTML template
 
-**6-7 Embeds:**
+**Phase 5B: Discord (SECONDARY) — Short summary only (1 embed)**
+- **Webhook URL:** Read from `config["discord_webhook_url"]` (see `references/config.md`). If empty → skip Discord entirely.
+- **1 embed only** (not 6-7): ticker, price, score, recommendation, VRP signal, grade, IV rank, GEX sign, trade strategy
+- Footer: "Full report → email"
+- See `references/email-delivery.md` → "Discord Summary" section for embed template
 
-| # | Embed | Notes |
-|---|-------|-------|
-| 1 | Summary + Key Metrics | Includes VRP signal inline field |
-| 2 | Market Structure ({MKT_SCORE}/28) | GEX walls, flip, dealer positioning |
-| 3 | Volatility ({VOL_SCORE}/28) | IV/HV, skew, term structure |
-| 4 | Flow & Positioning ({FLOW}/24 + {POS}/20) | Flow + OI Changes + Short Interest + Squeeze Risk |
-| 5 | VRP Put-Selling Assessment | **New.** VRP state, signal, put credit spread if conditions met, or DO NOT SELL reason |
-| 6 | Trade Idea + Management | Directional trade (or VRP-merged if applicable) |
-| 7 | Payoff Diagram (image) | Chart.js screenshot. Skipped if no trade or `--fast` |
-
-See `references/discord-delivery.md` for full embed templates and payload builder.
-
-**⚡ Batch all 6 text embeds into a SINGLE webhook call** (Discord allows 10 embeds per message). Only the payoff image needs a separate multipart call. Total: 2 calls max. See `references/discord-delivery.md` for the batched sender code.
+**⚠ NO hardcoded webhook URL.** The webhook URL was removed from all skill files. Users must run `--setup` to configure Discord delivery. If no config exists, Discord is silently skipped.
 
 **Conversation output (minimal):**
-After Discord delivery, display only:
-- `Report sent to Discord (7/7)` if payoff chart included, or `(6/6)` if skipped (or `Discord delivery failed`)
+After delivery, display only:
+- `📧 Full report drafted to {EMAIL}` (if email configured)
+- `✅ Discord summary sent` or `Discord: skipped (no webhook configured)` or `Discord: failed`
 - Ticker, price, score, recommendation (1 line)
 - VRP signal: SELL / DO NOT SELL (1 line)
 - 1-line executive summary
+
+### Phase 5.5: Outcome Auto-Check (Async)
+
+**Runs in parallel with Phase 5.** Load `references/outcome-tracking.md` for full logic.
+
+At invocation start, check DuckDB for analyses older than 7 calendar days (~5 trading days) without outcome rows. Process at most 10 (configurable via `config.preferences.auto_check_cap`). Report results at the END of the conversation:
+
+```
+───────────────────────────────
+📊 Auto-checked {N} outcomes: {N_CORRECT}/{N_DIRECTIONAL} correct ({ACC}%)
+```
+
+### Phase 5.6: Alert Check
+
+**Runs after Phase 4.** Load `references/alerts.md` for logic.
+
+Check config alerts matching this ticker. If any condition triggers, append to conversation output:
+```
+🔔 ALERT: {TICKER} {METRIC} = {VALUE} ({OP} {THRESHOLD})
+```
+
+### Intelligence Commands (Non-Analysis)
+
+These commands do NOT run Phases 1-5. They have their own flows:
+
+| Command | Reference File | Needs Playwright? |
+|---------|---------------|-------------------|
+| `--setup` | `references/config.md` | No |
+| `--check` | `references/outcome-tracking.md` | No |
+| `--calibrate` | `references/calibration.md` | No |
+| `--history` | `references/history-replay.md` | No |
+| `--replay` | `references/history-replay.md` | No |
+| `--regime` | `references/regime-dashboard.md` | **Yes** |
+| `--brief` | `references/weekly-brief.md` | **Yes** (regime) |
+| `--alert` | `references/alerts.md` | No |
+
+Load the respective reference file when the command is invoked. Follow its instructions exactly.
 
 ---
 
@@ -630,6 +693,7 @@ Scan complete. Analyzing top {N} candidates: {T1}, {T2}, {T3}...
 
 ## Roadmap / Todo
 
+### Completed
 - [x] VRP put-selling assessment — VRP z-score, regime proxy, GEX-anchored put credit spreads, always-on by default
 - [x] Payoff visualization — Chart.js payoff diagrams via Playwright screenshot + Discord image embed
 - [x] `--scan` flag — daily scan mode with universe scanning, conviction filter, setup classification
@@ -641,11 +705,20 @@ Scan complete. Analyzing top {N} candidates: {T1}, {T2}, {T3}...
 - [x] Sector ETF comparison (batch mode)
 - [x] Scan-to-batch pipeline (--analyze-top N)
 - [x] Full analysis persistence (DuckDB)
-- [ ] Automated outcome tracking (fetch price N days later, compare to trade idea)
-- [ ] Historical GEX trend (requires persistence — compute from saved snapshots)
-- [ ] Custom watchlist management (add/remove tickers via command)
-- [ ] Earnings context block — avg historical moves, expected vs actual, EPS streak
+- [x] Config system — `~/.config/unusual-whales/config.yaml`, `--setup` command, webhook URL removed from repo
+- [x] Email delivery — Gmail MCP rich HTML reports (primary output channel)
+- [x] Automated outcome tracking — T+5/T+30 price checks, direction accuracy, lazy auto-check
+- [x] Signal calibration — per-bucket accuracy with 50+ sample minimum, per-ticker breakdown
+- [x] Historical query engine — `--history`, `--replay` (renders stored data, no re-scoring)
+- [x] Market regime dashboard — `--regime` quick SPY/QQQ check
+- [x] Weekly intelligence brief — `--brief` model accuracy synthesis
+- [x] Earnings context block — avg historical moves, IV crush probability, hold-through recommendations
+- [x] Condition-based alerts — `--alert` with config persistence, checked at analysis time
+
+### Future
+- [ ] Historical GEX trend (compute from saved snapshots over time)
 - [ ] Risk metrics — beta, Sharpe, 1σ range from /stock/{T}/risk page
 - [ ] Seasonality one-liner — current month's historical win rate + avg return
 - [ ] Official UW MCP Server — migrate from Playwright scraping to native MCP calls
 - [ ] Enhanced Discord — chart thumbnails, embed author icon
+- [ ] P&L tracking — trade journaling with actual entry/exit prices
