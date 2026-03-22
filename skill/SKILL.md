@@ -168,6 +168,7 @@ Run Phase 1 → 1.5 → 2 → 2.5 → 2.7 → 2.8 → 3 → 3.2 → 3.5 → 3.6 
 - Conversation output per ticker: 1-line confirmation
 - **Failure isolation:** If a ticker encounters a fatal error (Cloudflare, 404, ticker not found), output the error, skip remaining phases for that ticker, and continue the loop for the next ticker. Do not abort the entire batch.
 - **Context management:** After each ticker's Phase 5 completes, the intermediate extraction data for that ticker is no longer needed. Phase 4.5 captures it permanently. Only carry forward SharedContext and the running batch summary.
+- **Reasoning state lifecycle:** ReasoningState, ScenarioState, and CrossTickerState are produced per-ticker and consumed by that ticker's Phase 3.6. After Phase 5 delivery for a ticker, only the Conviction & Risks block (compact) and final scores carry forward to the batch cross-comparison. The full intermediate states are not needed after delivery and should not be referenced for other tickers.
 
 After ALL tickers complete:
 
@@ -249,7 +250,11 @@ Load `references/vrp-put-selling.md` for VRP framework, computation logic, and s
 
 ### Phase 2: Analysis
 
-Load `references/analysis-framework.md` for scoring logic.
+Load `references/analysis-framework.md` for scoring logic and rubrics.
+
+**Scoring discipline:** For each bucket, reason through every sub-score using the format in `analysis-framework.md` § Scoring Discipline. Use rubrics when data is messy (multiple flips, missing fields, conflicting sources). Use formulas when data is clean and numerical. Use the Data Conflict Resolution rules when extracted data has conflicting values.
+
+**`--fast` mode scoring:** Only Market Structure and Volatility buckets are scored. Flow and Positioning are marked `[SKIPPED — fast mode]`, scored as 0, and re-weighted per the bucket failure formula. Conviction & Risks confidence is capped at Medium in `--fast` mode.
 
 Compute the 4-bucket composite score:
 
@@ -284,9 +289,9 @@ With all extracted data and bucket scores in context, reason through:
 3. **Overrides:** Check override conditions — if any trigger, note the adjustment for Phase 3
 4. **Risks:** Identify 2-3 setup-specific risks (not generic disclaimers)
 
-Produce the `ReasoningState` structure (see `ai-reasoning.md`). Phase 3 consumes `override_flags` and `grade`. Phase 3.6 consumes the full state.
+Produce the `ReasoningState` in the format defined in `references/ai-reasoning.md` § Required Output Format. All fields must be populated. This state is consumed by Phases 2.7, 2.8, 3, and 3.6.
 
-Do NOT output this reasoning to the user — it feeds into later phases.
+Do NOT output the raw ReasoningState to the user. It feeds into later phases only.
 
 ### Phase 2.7: Scenario Analysis
 
@@ -302,7 +307,7 @@ Using Phase 2.5 `ReasoningState` + all extracted data + ImpliedMoves (Step 2.5a)
 - Probability hints: qualitative only (likely/moderate/unlikely)
 - If data inputs are null, degrade gracefully (see fallback rules in ai-reasoning.md)
 
-Do NOT output to user — feeds Phase 3.2 (strike alignment), Phase 3.6 (narrative), and delivery (scenarios section).
+Produce the `ScenarioState` in the format defined in `references/ai-reasoning.md` § Required Output Format. Do NOT output raw state to user — it feeds Phase 3.2 (strike alignment), Phase 3.6 (narrative), and delivery (scenarios section).
 
 ### Phase 2.8: Cross-Ticker Context
 
@@ -316,7 +321,7 @@ Using Phase 0.5 `BenchmarkContext` (SPY + sector ETF), compare this ticker's sig
 - IV rank comparison (ticker-specific vol vs sector baseline)
 - Directional divergence (swimming against the tide?)
 
-Do NOT output to user — feeds Phase 3.6 (narrative) and delivery (market context section).
+Produce the `CrossTickerState` in the format defined in `references/ai-reasoning.md` § Required Output Format. Do NOT output raw state to user — it feeds Phase 3.6 (narrative) and delivery (market context section).
 
 ### Phase 3: Trade Idea Generation
 
@@ -447,6 +452,8 @@ Using Phase 2.5 `ReasoningState` + Phase 2.7 `ScenarioState` + Phase 2.8 `CrossT
    - **If no risk applies for an embed, produce nothing** — the "Note" field will be omitted entirely from that embed
 4. **VRP qualifier** — If Phase 2.5 flagged concerns that affect the VRP signal, add a brief qualifier to Embed 5's description. If no concerns, skip.
 
+5. **Produce Conviction & Risks block** — See `references/ai-reasoning.md` § Conviction & Risks Block. This is the final step of narrative synthesis. It is included in the canonical AnalysisReport and formatted by both delivery channels.
+
 These outputs replace the template-style text in Phase 4 formatting. Character budgets are hard limits — truncate at sentence boundary if over.
 
 ### Phase 4: Output
@@ -457,15 +464,16 @@ Format the full report text internally, but **display only a brief summary in th
 2. **Full report (for email + Discord summary in Phase 5):** All sections below
 
 Full report sections (used by email and Discord delivery):
-1. **Header:** ticker, LIVE price, data date, score bar, recommendation
+1. **Header:** ticker, LIVE price, data date, score bar, recommendation, data quality summary (count of [JS]/[API]/[~APPROX]/[STALE]/[T+1]/[N/A] tags)
 2. **Executive summary:** Phase 3.6 narrative synthesis (3-4 sentences connecting signals, not listing them). Include VRP signal if actionable.
-3. **Market Structure:** GEX table (walls + flips relative to LIVE price), dealer positioning, vanna/charm bias
-4. **Volatility:** IV rank, IV-HV spread, skew (with actual 25d put/call IVs), term structure, vol regime, implied moves
-5. **Flow:** Net premium, C/P ratio, dark pool conviction + print count
-6. **Positioning [T+1]:** OI change bias (top 3 strikes table), short interest (ratio + σ-relative label), squeeze risk (utilization + DTC)
-7. **VRP Put-Selling Assessment:** VRP raw, z-score, regime proxy, signal (SELL/DO NOT SELL), put credit spread details if signal is SELL, or reason if not
-8. **Score breakdown:** Per-bucket scores with visual bars (4 buckets)
-9. **Trade ideas:** Directional trade (from composite score) + VRP put credit spread (if conditions met). If VRP merged with directional → single "VRP-enhanced" trade. **Reasoning field** uses Phase 3.6 narrative (not template text). If 3A is "Wait" + VRP SELL, show VRP trade only. If both "Wait" + "DO NOT SELL", omit Embed 6 entirely.
+3. **Conviction & Risks:** Grade, confidence, top signal, top contradiction, key uncertainty, what to watch. See `references/ai-reasoning.md` § Conviction & Risks Block for format and derivation rules.
+4. **Market Structure:** GEX table (walls + flips relative to LIVE price), dealer positioning, vanna/charm bias
+5. **Volatility:** IV rank, IV-HV spread, skew (with actual 25d put/call IVs), term structure, vol regime, implied moves
+6. **Flow:** Net premium, C/P ratio, dark pool conviction + print count
+7. **Positioning [T+1]:** OI change bias (top 3 strikes table), short interest (ratio + σ-relative label), squeeze risk (utilization + DTC)
+8. **VRP Put-Selling Assessment:** VRP raw, z-score, regime proxy, signal (SELL/DO NOT SELL), put credit spread details if signal is SELL, or reason if not
+9. **Score breakdown:** Per-bucket scores with visual bars (4 buckets)
+10. **Trade ideas:** Directional trade (from composite score) + VRP put credit spread (if conditions met). If VRP merged with directional → single "VRP-enhanced" trade. **Reasoning field** uses Phase 3.6 narrative (not template text). If 3A is "Wait" + VRP SELL, show VRP trade only. If both "Wait" + "DO NOT SELL", omit Embed 6 entirely.
 10. **Payoff diagram:** Chart.js visualization of P&L curve (if Phase 3.5 generated one)
 11. **Footer:** Data date caveat, T+1 badge on positioning, risk disclaimer
 

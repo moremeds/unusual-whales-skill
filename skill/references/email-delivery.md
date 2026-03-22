@@ -47,6 +47,22 @@ Phase 4 (AnalysisReport)
     <p style="margin: 0; line-height: 1.5;">{PHASE_3_6_NARRATIVE}</p>
   </div>
 
+  <!-- Conviction & Risks — always included (from Phase 3.6 ConvictionAndRisks block) -->
+  <div style="background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 16px; border-left: 4px solid {COLOR};">
+    <h2 style="margin: 0 0 8px; font-size: 16px;">Conviction & Risks</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 13px; margin-bottom: 8px;">
+      <div><strong>Grade:</strong> {GRADE}</div>
+      <div><strong>Confidence:</strong> {CONFIDENCE}</div>
+      <div><strong>Data Quality:</strong> {QUALITY_SUMMARY}</div>
+    </div>
+    <div style="font-size: 13px;">
+      <div style="margin-bottom: 6px;"><strong>Top Signal:</strong> {TOP_SIGNAL}</div>
+      <div style="margin-bottom: 6px;"><strong>Top Contradiction:</strong> {TOP_CONTRADICTION}</div>
+      <div style="margin-bottom: 6px;"><strong>Key Uncertainty:</strong> {KEY_UNCERTAINTY}</div>
+      <div><strong>What To Watch:</strong> {WATCH_ITEMS}</div>
+    </div>
+  </div>
+
   <!-- Scenarios (conditional — omit if ScenarioState is null) -->
   {IF_SCENARIOS:
   <div style="background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 16px;">

@@ -93,6 +93,28 @@ ReasoningState {
 **Phase 3 consumes:** `override_flags` and `grade` (for trade selection adjustments).
 **Phase 3.6 consumes:** the full `ReasoningState` (for narrative synthesis).
 
+### Required Output Format
+
+After reasoning through confluence, grade, overrides, and risks, produce this structure. All fields must be populated — use `null` or `[]` for inapplicable fields, never omit them.
+
+```
+ReasoningState:
+  grade: A | B | C
+  available_buckets:
+    - Market Structure ({data_quality_tag})
+    - Volatility ({data_quality_tag})
+    - Flow ({data_quality_tag})           # or [SKIPPED] in --fast
+    - Positioning ({data_quality_tag})     # or [SKIPPED] in --fast
+  confluence: "2-3 sentences: which signals reinforce, what the combined picture says"
+  contradictions: ["signal X vs signal Y — implication"] | []
+  override_flags: [event_risk_override | hidden_directional_edge | thin_conviction | iv_mismatch] | []
+  key_risks:
+    - "specific risk 1 — not a generic disclaimer"
+    - "specific risk 2"
+  vrp_qualifier: "sentence if VRP signal has concerns" | null
+  sector_context: "sentence comparing to SPY/sector if benchmark available" | null
+```
+
 ---
 
 ## Phase 2.7: Scenario Analysis
@@ -167,6 +189,28 @@ Max 150 chars per scenario description (trigger + mechanism combined).
 **Phase 3.6 consumes:** Full ScenarioState for narrative weaving.
 **Delivery consumes:** Condensed scenario lines for Discord Embed 1 and email Scenarios section.
 
+### Required Output Format
+
+```
+ScenarioState:
+  bull:
+    trigger: "what causes the move (specific level or catalyst)"
+    target: "$X (anchored to GEX wall or implied move range)"
+    mechanism: "why the move sustains (dealer mechanics, flow, etc.)"
+    probability: likely | moderate | unlikely
+  base:
+    range: "$X – $Y (nearest support to resistance)"
+    mechanism: "what keeps price contained"
+    probability: likely | moderate | unlikely
+  bear:
+    trigger: "what level break initiates the move"
+    target: "$X (anchored to GEX wall or implied move range)"
+    mechanism: "why the move accelerates"
+    probability: likely | moderate | unlikely
+  key_level: "$X — reason it matters (e.g., GEX flip, max gamma strike)"
+  vol_scenario: "IV path in each case (compression/expansion/unstable)"
+```
+
 ---
 
 ## Phase 2.8: Cross-Ticker Context
@@ -210,6 +254,17 @@ CrossTickerState {
 
 **Phase 3.6 consumes:** CrossTickerState for "Relative Context" paragraph in narrative.
 **Delivery consumes:** Top insight for Discord "vs Market" field, all insights for email "Market Context" section.
+
+### Required Output Format
+
+```
+CrossTickerState:
+  spy: { price: $X, gex_regime: positive | negative, iv_rank: N }
+  sector_etf: { ticker: "XLK", gex_regime: positive | negative, iv_rank: N } | null
+  relative_insights:
+    - "insight 1, max 120 chars (e.g., 'SPY also negative gamma — market-wide, not NVDA-specific')"
+    - "insight 2, max 120 chars (e.g., 'NVDA IV Rank 17 vs SPY 30 — relatively underpriced vol')"
+```
 
 ---
 
@@ -302,3 +357,64 @@ If Phase 2.5 flagged concerns that affect the VRP signal:
 - **VRP DO NOT SELL:** Briefly note what would need to change. Example: "VRP inverted (z=-0.3). Would need IV to expand or RV to compress for premium-selling edge."
 
 If no concerns affect VRP, produce no qualifier (field is null).
+
+### Required Output Format
+
+```
+NarrativeSynthesis:
+  executive_summary: "3-4 sentences, max 400 chars — connect signals, don't list metrics"
+  trade_reasoning: "max 600 chars — why this trade at these strikes, referencing specific data"
+  risk_callouts:
+    market_structure: "max 120 chars" | null   # omit entirely if no genuine risk
+    volatility: "max 120 chars" | null
+    flow: "max 120 chars" | null
+  vrp_qualifier: "sentence" | null
+```
+
+---
+
+## Conviction & Risks Block
+
+Produced as the **FINAL step** of Phase 3.6. Included in the canonical AnalysisReport (Phase 4) and formatted by both delivery channels. This is the only intermediate reasoning state that surfaces to the user.
+
+### Format
+
+```
+ConvictionAndRisks:
+  grade: A | B | C
+  score: N/100
+  confidence: High | Medium | Low
+  top_signal: "single most important signal driving the recommendation"
+  top_contradiction: "single biggest counter-signal" | "None — signals aligned"
+  key_uncertainty: "If [X changes], then [recommendation would flip to Y]"
+  what_to_watch: "1-2 specific levels, dates, or events for next session"
+```
+
+### Confidence Derivation
+
+Confidence reflects **data quality and completeness**, not conviction in the trade direction.
+
+| Confidence | Criteria |
+|-----------|----------|
+| **High** | All 4 buckets scored. Data from [JS] or [API] with current dates. No [N/A] sections. Grade A or B. |
+| **Medium** | Some data is [STALE] or [T+1] (expected for positioning). OR some [~APPROX] extraction. OR Grade B with mild contradictions. OR `--fast` mode (2 buckets only — confidence capped at Medium regardless of grade). |
+| **Low** | Multiple [N/A] sections (extraction failures). OR Grade C. OR benchmark data unavailable (cross-ticker context skipped). OR data date > 2 trading days stale. |
+
+### Field Rules
+
+- **Top Signal:** Pick ONE signal, not a summary. The single data point or pattern that matters most.
+  - Bad: "Bullish flow and cheap IV."
+  - Good: "Heavy institutional call buying at 185-190 strikes ($5.2M net premium)."
+
+- **Top Contradiction:** Must name specific signals in conflict. If none exist, say so.
+  - Bad: "Some mixed signals."
+  - Good: "Bullish flow (+$13.5M) contradicts deep negative gamma (price 1.5% below flip)."
+  - Good: "None — all 4 buckets align bearish with Grade A conviction."
+
+- **Key Uncertainty:** Frame as IF/THEN with a specific trigger. What would change your mind?
+  - Bad: "Market could go down."
+  - Good: "If Monday opens below $170, negative gamma accelerates — recommendation flips to SELL."
+
+- **What To Watch:** Reference specific numbers, dates, or events. Actionable for next session.
+  - Bad: "Watch the market."
+  - Good: "Monday open vs $175 GEX flip. OI settlement data (T+1 Tuesday). SPY GEX regime shift."

@@ -112,9 +112,14 @@ color_map = {
 
 // Add ONLY if CrossTickerState is not null. Omit field entirely if null.
 {"name": "vs Market", "value": "{TOP_RELATIVE_INSIGHT}", "inline": false}
+
+// Conviction & Risks — always included (from Phase 3.6 ConvictionAndRisks block)
+{"name": "Conviction", "value": "**{GRADE}** — {CONFIDENCE} | Top: {TOP_SIGNAL}", "inline": false},
+{"name": "Risk", "value": "{TOP_CONTRADICTION}", "inline": true},
+{"name": "Watch", "value": "{WHAT_TO_WATCH}", "inline": true}
 ```
 
-**Char budget:** Scenarios field max 240 chars (3 lines × 80 chars). If Embed 1 exceeds 5500 chars total, truncate scenarios to bull/bear only (drop base case line). vs Market field max 120 chars.
+**Char budget:** Scenarios field max 240 chars. Conviction fields add ~400 chars. If Embed 1 exceeds 5500 chars total, truncate in order: (1) Drop "Watch" field, (2) Truncate Scenarios to bull/bear only (drop base), (3) Truncate "vs Market" field. Key Uncertainty is email-only (too detailed for Discord embed).
 
 ```json
 ```

@@ -31,6 +31,32 @@ Example: if Positioning (±20) is unavailable, remaining max = 80. A raw score o
 
 **Recommendation thresholds are applied to the adjusted score** (same thresholds as always).
 
+## Scoring Discipline
+
+For each bucket, reason through every sub-score before assigning the bucket total. This prevents approximation and ensures reproducible scores.
+
+**Format per sub-score:**
+```
+{metric}: {extracted_value} → {interpretation} → {N}
+```
+
+**Format per bucket total:**
+```
+{bucket}: {sum of sub-scores} (clamped to ±{max})
+```
+
+**Example (Market Structure):**
+```
+GEX flip: price $172.84 below primary flip $175.50 (1.5%) → negative gamma → -8
+Walls: $347M negative gamma at 172.5 = amplification, not support → -6
+DEX: concentrated negative at 170-175 → -3
+Vanna: +$164M OI (positive, bullish on vol rise) [STALE 3/18] → +1
+Charm: deeply negative → -2
+Market Structure: -18 (clamped to ±28) ✓
+```
+
+Score every sub-signal, even when its contribution is 0. This makes the reasoning auditable and prevents skipped signals from silently changing the total.
+
 ### Bucket 1: Market Structure (±28 max)
 
 **Inputs:** GEX, DEX, Vanna, Charm
@@ -61,6 +87,15 @@ charm_score = +3 if net_charm > 0 else -3 if net_charm < 0 else 0
 
 market_structure = clamp(gex_score + wall_score + dex_score + vanna_score + charm_score, -28, 28)
 ```
+
+#### Market Structure Rubrics
+
+Use these when extracted data is messy or ambiguous:
+
+- **Multiple GEX flips:** Use the **primary flip** = the flip with the steepest GEX gradient (largest absolute GEX change between adjacent strikes). If 8 flips exist, most are noise at low-GEX strikes — only significant flips (where GEX crosses zero between strikes with >$1M absolute GEX) count.
+- **Data conflict:** Page extraction (Tier 0/1) always overrides API (Tier 3) for GEX. The API spot price may lag 1-3 trading days. Use LIVE price from page header for GEX-vs-price analysis.
+- **Missing sub-signals:** If DEX extraction fails → dex_score = 0. If vanna/charm data is stale (>2 trading days) → score at face value but note `[STALE]` in reasoning. If completely unavailable → sub-score = 0. Never guess.
+- **Wall interpretation in negative gamma:** When price is in a negative gamma zone, nearby "support" walls with large negative GEX are **amplifiers**, not cushions. Score them as bearish (they make moves worse). Only positive GEX walls provide genuine support/resistance.
 
 ### Bucket 2: Volatility (±28 max)
 
@@ -118,6 +153,13 @@ term_score = +4 if contango else -4 if backwardation else 0
 
 volatility = clamp(iv_rank_score + spread_score + skew_score + term_score, -28, 28)
 ```
+
+#### Volatility Rubrics
+
+- **Conflicting IV sources:** If page shows IV 37.5% but API stats show 36.7%, use page value for scoring (more recent). Note both in reasoning. If only API is available, use it with `[API]` tag.
+- **Skew source priority:** risk_reversal_skew API (25-delta row) > percentiles/skewness API > DOM text extraction. If sources contradict, use the higher-priority source and note the conflict.
+- **IV rank at boundaries:** At exactly 30 or 70 → score is 0 (no signal). The formulas handle this naturally but be explicit in shown work.
+- **IV-HV spread when VRP is thin:** A spread of <2% (e.g., IV 37.5% vs RV 35.9%) means options are fairly priced, not cheap or expensive. Score near 0 for the spread component.
 
 **Additional context (not scored in composite, but used for VRP assessment):**
 - **Vol regime** (from regime endpoint): low/medium/high — adds qualitative context
@@ -207,6 +249,12 @@ if expiry_flow is not None and expiry_flow.concentrated and expiry_flow.concentr
 flow = clamp(premium_score + ratio_score + darkpool_score + concentration_score, -24, 24)
 ```
 
+#### Flow Rubrics
+
+- **Dark pool empty:** If the dark pool page returns no prints for the ticker in the default view → darkpool_score = 0. Do not infer direction from absence. Do not navigate/filter further — the default view is sufficient.
+- **Premium vs ratio conflict:** Score each independently. If net premium is bullish (+$13.5M) but PCR is bearish (0.77 = call-heavy, actually bullish in this case), or if bull/bear premiums nearly balance despite bullish net, let both sub-scores stand. The contradiction surfaces in Phase 2.5 as a confluence conflict.
+- **Opex-day flow distortion:** If data date is a monthly opex day (3rd Friday), 0DTE flow can dominate net premium. Check the expiry breakdown — if >50% of net premium is in same-day expiry, note "opex-day flow — may not persist" in reasoning.
+
 ### Bucket 4: Positioning (±20 max) — NEW
 
 **Inputs:** OI Changes (T+1), Short Interest (T+1), Squeeze Risk
@@ -253,6 +301,14 @@ squeeze_score = 0
 positioning = clamp(oi_change_score + si_score + squeeze_score, -20, 20)
 ```
 
+#### Positioning Rubrics
+
+- **Low OI activity:** If OI changes are below the 500-contract guard on either side → oi_change_score = 0. Note "insufficient OI change volume for signal" in reasoning.
+- **Missing utilization/DTC:** If shares available or utilization data is unavailable from the Shorts page → squeeze_score = 0.
+- **All data is [T+1]:** This is EXPECTED for positioning data (prior close settlement). It is not a data quality issue — score normally, badge the bucket with [T+1].
+- **Short volume baseline:** ~50% short volume is normal for liquid stocks due to MM hedging. Only score deviations relative to the ticker's own history (σ-relative). For mega-caps ($100B+), short volume rarely signals directional intent.
+- **OI from net-prem-strikes (fallback):** If the OI Changes page fails to load, use flow volume data from net-prem-strikes as a proxy for positioning activity. Mark as `[~APPROX]` and reduce oi_change_score weight (cap at ±5 instead of ±10).
+
 ### Total Score → Recommendation
 
 ```
@@ -296,6 +352,25 @@ opex_window = abs((today - third_friday).days) <= 3
 - Add to report: "⚡ Opex Week — GEX pinning at ${MAX_GAMMA_STRIKE} (±{PIN_RANGE}%)"
 
 **Max-gamma strike:** The strike with highest absolute GEX value from the GEX chart data.
+
+## Data Conflict Resolution
+
+When extracted data has conflicting values (e.g., page vs API, different dates), use this priority order:
+
+| Priority | Source | Trust Level | Action |
+|----------|--------|-------------|--------|
+| 1 | Page Tier 0 (React Fiber / Highcharts) | Highest | Use as-is, tag `[JS]` |
+| 2 | Page Tier 1 (DOM text / JS eval) | High | Use as-is, tag `[JS]` |
+| 3 | API with current-day date | Moderate | Acceptable for vol stats, flow. May be stale for GEX. Tag `[API]` |
+| 4 | Page Tier 2 (Snapshot / screenshot) | Low | Use with caution, tag `[~APPROX]` |
+| 5 | API with past date | Lowest | Tag `[STALE]`, note lag in reasoning |
+
+**Key rules:**
+- For GEX data: page extraction ALWAYS wins over API (API GEX can lag 1-3 trading days)
+- For vol stats: API is acceptable (page and API usually agree)
+- For flow data: API is the primary source (extracted via `browser_evaluate` on the page)
+- When dates conflict: use the more recent source, note the discrepancy
+- Data quality tags (`[JS]`, `[API]`, `[~APPROX]`, `[STALE]`, `[T+1]`, `[N/A]`) feed into the Conviction & Risks confidence derivation (see `ai-reasoning.md`) — they do NOT change the score itself
 
 ## Phase 2.5 Override Conditions
 
