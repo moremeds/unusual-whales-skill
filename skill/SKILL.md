@@ -45,7 +45,7 @@ Analyze options data from Unusual Whales for any ticker: dealer positioning (GEX
 
 ### Management Commands
 ```
-/unusual-whales --setup                       # First-time config (webhook, email)
+/unusual-whales --setup                       # First-time config (Discord channel, email)
 /unusual-whales --check                       # Process all pending outcomes
 /unusual-whales --alert TSLA vrp_zscore > 1.0 # Set condition alert
 /unusual-whales --alert list                  # Show active alerts
@@ -56,7 +56,7 @@ Analyze options data from Unusual Whales for any ticker: dealer positioning (GEX
 ### Config
 
 All user settings stored in `~/.config/unusual-whales/config.yaml`. Run `--setup` to create.
-Discord webhook URL is **NOT hardcoded** — must be configured via `--setup`.
+Discord channel ID is **NOT hardcoded** — must be configured via `--setup`.
 See `references/config.md` for schema and loading logic.
 
 ## Workflow
@@ -140,7 +140,7 @@ Run Phase 1 → 1.5 → 2 → 2.5 → 3 → 3.5 → 3.6 → 4 → 4.5 → 5 for 
 
 - Phase 2.5 receives SharedContext (if batch mode) for sector-relative analysis
 - Phase 4.5 persists to DuckDB with batch_id linking all tickers from this run
-- Phase 5 sends Discord embeds immediately (don't wait for other tickers)
+- Phase 5 sends Discord messages immediately (don't wait for other tickers)
 - Conversation output per ticker: 1-line confirmation
 - **Failure isolation:** If a ticker encounters a fatal error (Cloudflare, 404, ticker not found), output the error, skip remaining phases for that ticker, and continue the loop for the next ticker. Do not abort the entire batch.
 - **Context management:** After each ticker's Phase 5 completes, the intermediate extraction data for that ticker is no longer needed. Phase 4.5 captures it permanently. Only carry forward SharedContext and the running batch summary.
@@ -187,7 +187,7 @@ After ALL tickers complete, output batch summary:
 })
 ```
 
-**⚡ Performance: Discord delivery batched** — all 6 text embeds sent in 1 webhook call (saves ~7s). See `references/discord-delivery.md`.
+**Discord delivery via bot** — markdown summary sent via Discord MCP `reply` tool. See `references/discord-delivery.md`.
 
 **`--fast` mode skips pages 3-6** (unchanged behavior — GEX + Vol only).
 Total time: **~40-55s default** (was ~60-80s), ~20-25s fast.
@@ -352,11 +352,10 @@ Load `references/payoff-visualization.md` for Black-Scholes code, strategy formu
    - Wait 2 seconds for Chart.js to render
    - Take screenshot → save to `/tmp/uw-payoff-{TICKER}-{YYYYMMDD}.png`
 
-5. **Send to Discord as Embed 6** (image embed):
-   - Use `multipart/form-data` to upload the screenshot
-   - Embed references the image via `"image": {"url": "attachment://uw-payoff-{TICKER}.png"}`
-   - Embed title: `"📉 Payoff Diagram — {STRATEGY_NAME}"`
-   - Embed footer: `"Black-Scholes estimate • Verify at broker"`
+5. **Send to Discord as file attachment:**
+   - Use Discord MCP `reply` with `files` parameter to upload the screenshot
+   - Text: `"📉 Payoff Diagram — {STRATEGY_NAME}"`
+   - See `references/discord-delivery.md` → Payoff Diagram section
    - Same color as other embeds (directional color map)
 
 6. **Navigate back** to UW page (or close the local file tab) so the browser is clean for any subsequent operations.
@@ -383,9 +382,9 @@ These outputs replace the template-style text in Phase 4 formatting. Character b
 Format the full report text internally, but **display only a brief summary in the conversation:**
 
 1. **Conversation output (brief):** Ticker, LIVE price, composite score, recommendation, 1-line executive summary
-2. **Full report (for Discord in Phase 5):** All sections below
+2. **Full report (for email + Discord summary in Phase 5):** All sections below
 
-Full report sections (used by Discord delivery):
+Full report sections (used by email and Discord delivery):
 1. **Header:** ticker, LIVE price, data date, score bar, recommendation
 2. **Executive summary:** Phase 3.6 narrative synthesis (3-4 sentences connecting signals, not listing them). Include VRP signal if actionable.
 3. **Market Structure:** GEX table (walls + flips relative to LIVE price), dealer positioning, vanna/charm bias
@@ -424,7 +423,7 @@ Do NOT output persistence details to user — it happens silently.
 
 ### Phase 5: Delivery (Email Primary + Discord Summary)
 
-**Two delivery channels.** Load `references/email-delivery.md` for HTML template and Gmail MCP integration. Load `references/config.md` for webhook URL and email config.
+**Two delivery channels.** Load `references/email-delivery.md` for HTML template and Gmail MCP integration. Load `references/config.md` for channel ID and email config.
 
 **Phase 5A: Email (PRIMARY) — Full rich HTML report via Gmail MCP**
 - Uses `gmail_create_draft` MCP tool to draft a rich HTML email
@@ -432,18 +431,19 @@ Do NOT output persistence details to user — it happens silently.
 - Subject: `UW Analysis: {TICKER} — ${PRICE} — {RECOMMENDATION} ({DATE})`
 - See `references/email-delivery.md` for full HTML template
 
-**Phase 5B: Discord (SECONDARY) — Short summary only (1 embed)**
-- **Webhook URL:** Read from `config["discord_webhook_url"]` (see `references/config.md`). If empty → skip Discord entirely.
-- **1 embed only** (not 6-7): ticker, price, score, recommendation, VRP signal, grade, IV rank, GEX sign, trade strategy
-- Footer: "Full report → email"
-- See `references/email-delivery.md` → "Discord Summary" section for embed template
+**Phase 5B: Discord (FULL) — Hybrid: webhook embeds + bot file uploads**
+- **Webhook URL:** Read from `config["discord_webhook_url"]` (see `references/config.md`). Used for rich embed report delivery.
+- **Channel ID:** Read from `config["discord_chat_id"]`. Used for bot interactions and file uploads.
+- **6 rich embeds** in 1 webhook call: summary, market structure, volatility, flow & positioning, VRP assessment, trade idea
+- **Payoff diagram:** sent via bot `reply` with file attachment (or webhook multipart fallback)
+- See `references/discord-delivery.md` for all embed templates, sending strategy, and error handling
 
-**⚠ NO hardcoded webhook URL.** The webhook URL was removed from all skill files. Users must run `--setup` to configure Discord delivery. If no config exists, Discord is silently skipped.
+**⚠ NO hardcoded webhook URL or channel ID.** Users must run `--setup` to configure. If both empty, Discord is silently skipped.
 
 **Conversation output (minimal):**
 After delivery, display only:
 - `📧 Full report drafted to {EMAIL}` (if email configured)
-- `✅ Discord summary sent` or `Discord: skipped (no webhook configured)` or `Discord: failed`
+- `✅ Report sent to Discord (6/6 embeds)` or `Discord: skipped (not configured)` or `Discord: failed`
 - Ticker, price, score, recommendation (1 line)
 - VRP signal: SELL / DO NOT SELL (1 line)
 - 1-line executive summary
@@ -609,28 +609,26 @@ Output format: `AAPL 4/5 ✅✅🔥` — flow score plus colored flags.
    - Candidates table: ticker, setup type(s), conviction score, key metric, current price
    - Top pick deep-dive (if any Type F multi-signal confluence found): 3-4 sentence summary with entry thesis
 
-2. **Discord delivery** — Send as **4 embeds** (scan mode):
-   - Embed 1: Scan Summary
-   - Embed 2: Setup Candidates Table (with 2-tier scores: `AAPL 4/5 ✅✅🔥`)
-   - Embed 3: Top Pick Deep-Dive (optional — only if Type F or 5/5 candidate)
-   - Embed 4: Signal Layer Matrix — skew z-score, PCR, GEX for all candidates (always sent)
-   - See `references/discord-delivery.md` → "Scan Mode Embeds" section for templates
-   - Use the same webhook URL and sending method as single-ticker mode
-   - Color: use `0x3498db` (blue) for scan reports (not directional)
+2. **Discord delivery** — Send as **2-3 markdown messages** via Discord MCP bot:
+   - Message 1 (always): Scan summary + candidates table (code block)
+   - Message 2 (always): Signal layer matrix (code block)
+   - Message 3 (conditional): Top pick deep-dive — only if Type F or 5/5 candidate
+   - See `references/discord-delivery.md` → "Scan Mode Messages" section for templates
+   - Use the same `discord_chat_id` and Discord MCP `reply` method as single-ticker mode
 
 3. **Conversation output (brief):**
    ```
    ✅ UW Scan complete — {DATE} {TIME} ET
    Screened: {N_SCREENED} | Passed filter: {N_PASSED} | Classified: {N_CLASSIFIED}
    Top setups: {TICKER1} (Type {X}, {SCORE}/5 {FLAGS}), {TICKER2} (Type {Y}, {SCORE}/5 {FLAGS}), ...
-   Report sent to Discord (4/4 embeds)
+   Report sent to Discord (2/2 messages)
    ```
 
 ### Scan-to-Batch Bridge
 
 **If `--analyze-top N` flag was set:**
 
-After scan Discord embeds are sent:
+After scan Discord messages are sent:
 
 1. Extract top N candidates from scan results, sorted by:
    - Conviction score (descending)
@@ -695,7 +693,7 @@ Scan complete. Analyzing top {N} candidates: {T1}, {T2}, {T3}...
 
 ### Completed
 - [x] VRP put-selling assessment — VRP z-score, regime proxy, GEX-anchored put credit spreads, always-on by default
-- [x] Payoff visualization — Chart.js payoff diagrams via Playwright screenshot + Discord image embed
+- [x] Payoff visualization — Chart.js payoff diagrams via Playwright screenshot + Discord file attachment
 - [x] `--scan` flag — daily scan mode with universe scanning, conviction filter, setup classification
 - [x] Scan signal layers — IV skew (Type G), PCR sentiment, GEX context with 2-tier scoring
 - [x] Single-ticker enhancements — skew labels, PCR labels, GEX gate for VRP, opex pinning detection
@@ -705,7 +703,7 @@ Scan complete. Analyzing top {N} candidates: {T1}, {T2}, {T3}...
 - [x] Sector ETF comparison (batch mode)
 - [x] Scan-to-batch pipeline (--analyze-top N)
 - [x] Full analysis persistence (DuckDB)
-- [x] Config system — `~/.config/unusual-whales/config.yaml`, `--setup` command, webhook URL removed from repo
+- [x] Config system — `~/.config/unusual-whales/config.yaml`, `--setup` command, Discord bot delivery via MCP
 - [x] Email delivery — Gmail MCP rich HTML reports (primary output channel)
 - [x] Automated outcome tracking — T+5/T+30 price checks, direction accuracy, lazy auto-check
 - [x] Signal calibration — per-bucket accuracy with 50+ sample minimum, per-ticker breakdown
@@ -720,5 +718,5 @@ Scan complete. Analyzing top {N} candidates: {T1}, {T2}, {T3}...
 - [ ] Risk metrics — beta, Sharpe, 1σ range from /stock/{T}/risk page
 - [ ] Seasonality one-liner — current month's historical win rate + avg return
 - [ ] Official UW MCP Server — migrate from Playwright scraping to native MCP calls
-- [ ] Enhanced Discord — chart thumbnails, embed author icon
+- [ ] Enhanced Discord — interactive bot commands (/analyze, /regime, /watchlist)
 - [ ] P&L tracking — trade journaling with actual entry/exit prices

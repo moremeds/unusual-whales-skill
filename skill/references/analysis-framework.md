@@ -20,7 +20,7 @@ Each bucket has 3 possible states: **live**, **stale** (T+1 or older), **unavail
 | State | Behavior |
 |-------|----------|
 | **live** | Score normally, no badge |
-| **stale** | Score normally, show `[T+1]` or `[STALE]` badge in Discord |
+| **stale** | Score normally, show `[T+1]` or `[STALE]` badge in output |
 | **unavailable** | Score = 0 for that bucket. Re-weight remaining buckets proportionally to maintain ±100 scale |
 
 **Re-weighting formula** (when a bucket is unavailable):
@@ -211,7 +211,7 @@ flow = clamp(premium_score + ratio_score + darkpool_score + concentration_score,
 
 **Inputs:** OI Changes (T+1), Short Interest (T+1), Squeeze Risk
 
-**⚠️ All data in this bucket is T+1 (prior close settlement). Label as "Prior Close Positioning" in Discord embeds.**
+**⚠️ All data in this bucket is T+1 (prior close settlement). Label as "Prior Close Positioning" in Discord messages and email.**
 
 | Signal | Bullish (+) | Bearish (-) | Weight |
 |--------|------------|-------------|--------|

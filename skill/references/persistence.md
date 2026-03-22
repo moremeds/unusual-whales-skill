@@ -65,11 +65,11 @@ CREATE TABLE IF NOT EXISTS raw_snapshots (
 
 Stored in `raw_snapshots.full_state`. Contains all extracted data, bucket scores, ReasoningState, trade ideas, management plans — everything needed to reconstruct the analysis. This is the backtesting archive.
 
-**Not included:** Discord embed payloads (built in Phase 5, after persistence runs).
+**Not included:** Discord message content (built in Phase 5, after persistence runs).
 
 ## Insert Timing
 
-After Phase 4 (formatting), before Phase 5 (Discord). If DB insert fails, log warning but proceed with Discord delivery — **persistence is non-blocking**.
+After Phase 4 (formatting), before Phase 5 (delivery). If DB insert fails, log warning but proceed with delivery — **persistence is non-blocking**.
 
 ## DuckDB Access Method
 

@@ -1,12 +1,12 @@
 # Config System
 
-User configuration for Discord webhook, watchlists, alerts, and preferences. Replaces all hardcoded settings.
+User configuration for Discord bot delivery, watchlists, alerts, and preferences. Replaces all hardcoded settings.
 
 ## Config Location
 
 `~/.config/unusual-whales/config.yaml`
 
-**Permissions:** `chmod 600` (contains webhook URL — must not be world-readable).
+**Permissions:** `chmod 600` (consistent security hygiene).
 
 ## Config Schema
 
@@ -14,9 +14,12 @@ User configuration for Discord webhook, watchlists, alerts, and preferences. Rep
 # ~/.config/unusual-whales/config.yaml
 # Created by /unusual-whales --setup
 
-# Discord webhook URL for short summary delivery
-# Get yours: Discord Server Settings → Integrations → Webhooks → New Webhook → Copy URL
-discord_webhook_url: "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+# Discord — hybrid delivery: webhook for rich embeds, bot for interactive features
+# Webhook URL: Server Settings → Integrations → Webhooks → New Webhook → Copy URL
+discord_webhook_url: ""
+# Channel ID: right-click channel → Copy Channel ID (requires Developer Mode)
+# ⚠ Store as quoted string — Discord snowflakes are 64-bit and exceed JS Number.MAX_SAFE_INTEGER
+discord_chat_id: ""
 
 # Email delivery (primary rich output via Gmail MCP)
 email:
@@ -58,14 +61,18 @@ preferences:
    - If user says no → abort
 2. Create directory: `mkdir -p ~/.config/unusual-whales`
 3. Ask user for Discord webhook URL:
-   - "Enter your Discord webhook URL (or press Enter to skip Discord):"
+   - "Enter your Discord webhook URL (for rich report delivery, or press Enter to skip):"
    - If provided → validate format (starts with `https://discord.com/api/webhooks/`)
    - If skipped → set `discord_webhook_url: ""`
-4. Ask for email address:
+4. Ask user for Discord channel ID:
+   - "Enter your Discord channel ID (for bot interaction — right-click channel → Copy Channel ID, or press Enter to skip):"
+   - If provided → validate format: digits-only regex `/^\d{17,20}$/`
+   - If skipped → set `discord_chat_id: ""`
+5. Ask for email address:
    - "Enter email address for full reports (or press Enter to skip):"
-5. Write config.yaml with defaults + user inputs
-6. `chmod 600 ~/.config/unusual-whales/config.yaml`
-7. Confirm: "Config created at ~/.config/unusual-whales/config.yaml"
+6. Write config.yaml with defaults + user inputs
+7. `chmod 600 ~/.config/unusual-whales/config.yaml`
+8. Confirm: "Config created at ~/.config/unusual-whales/config.yaml"
 
 ## Config Loading (used by ALL commands)
 
@@ -87,6 +94,7 @@ else:
 # Merge with defaults for any missing keys
 defaults = {
     "discord_webhook_url": "",
+    "discord_chat_id": "",
     "email": {"enabled": True, "to": ""},
     "watchlists": {
         "core": ["SPY", "QQQ", "TSLA", "NVDA", "AAPL"],
@@ -119,11 +127,12 @@ config = deep_merge(defaults, config)
 
 | Error | Detection | Action |
 |-------|-----------|--------|
-| Config file missing | `not os.path.exists(config_path)` | Use defaults. Discord skipped (no URL). Warn: "No config found. Run --setup for Discord delivery." |
+| Config file missing | `not os.path.exists(config_path)` | Use defaults. Discord skipped (no channel). Warn: "No config found. Run --setup for Discord delivery." |
 | Config YAML malformed | `yaml.safe_load` raises exception | Catch, show: "Config file is malformed. Run --setup to regenerate." Use defaults. |
 | Missing required key | Key not in parsed YAML | Deep merge fills from defaults — transparent to user |
 | Permission denied on read | `open()` raises PermissionError | Show: "Cannot read config at {path}. Check file permissions." |
-| Webhook URL invalid format | Doesn't start with `https://discord.com/api/webhooks/` | Warn: "Webhook URL looks invalid. Discord delivery may fail." |
+| chat_id invalid format | Not a digits-only string of 17-20 chars | Warn: "Discord chat_id looks invalid. Run --setup to fix." |
+| Legacy webhook URL found | `discord_webhook_url` present, `discord_chat_id` absent | Trigger auto-migration (see --setup Command) |
 
 ## Config Write (for --alert, --setup)
 
@@ -148,13 +157,14 @@ with open(config_path, 'w') as f:
 os.chmod(config_path, 0o600)
 ```
 
-## Migration from Hardcoded Webhook
+## Migration from Webhook to Bot
 
-After --setup creates the config with the user's webhook URL:
-- `discord-delivery.md` no longer contains a webhook URL — it reads from config
-- `SKILL.md` Phase 5 reads `config["discord_webhook_url"]`
-- If webhook URL is empty string → skip Discord delivery entirely
-- The old hardcoded URL in SKILL.md and discord-delivery.md is REMOVED
+Discord delivery switched from webhook (curl + embeds) to Discord MCP bot (reply + markdown).
+
+- `discord-delivery.md` uses `mcp__plugin_discord_discord__reply` — no webhook URL needed
+- `SKILL.md` Phase 5B reads `config["discord_chat_id"]`
+- If `discord_chat_id` is empty string → skip Discord delivery entirely
+- If legacy `discord_webhook_url` exists in config → auto-migration prompts for channel ID (see --setup Command)
 
 ## Available Metrics (for --alert conditions)
 

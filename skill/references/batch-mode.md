@@ -61,13 +61,13 @@ The companies API call is lightweight (JSON, no page navigation) and avoids hard
 2. **Phase 0.5:** If `len(ticker_list) > 1` → extract shared market context
 3. **For each ticker in `ticker_list`:**
    - Phase 1-1.5 → Phase 2 → Phase 2.5 → Phase 3-3.6 → Phase 4 → Phase 4.5 → Phase 5
-   - Discord results ship immediately per ticker (don't wait for all)
+   - Discord messages ship immediately per ticker (don't wait for all)
    - Conversation confirmation per ticker (1-line)
 4. **After all tickers:** batch summary line
 
 ## Scan-to-Batch Pipeline (`--scan --analyze-top N`)
 
-1. Run normal scan (Phases S1-S4), send scan Discord embeds
+1. Run normal scan (Phases S1-S4), send scan Discord messages
 2. Extract top N candidates from scan results (sorted by conviction score, no red flags)
 3. If fewer than N qualify after filtering, analyze those that do. If zero qualify, output "No candidates met criteria for batch analysis" and stop
 4. Feed qualifying candidates into batch pipeline: Phase 0.5 shared context → per-ticker loop

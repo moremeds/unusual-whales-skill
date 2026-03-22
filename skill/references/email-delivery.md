@@ -11,7 +11,7 @@ Phase 4 (AnalysisReport)
   │     └── All sections: summary, market structure, volatility, flow,
   │         positioning, VRP, trade ideas, payoff diagram, earnings context
   │
-  └──→ Phase 5B: Discord — SHORT summary only (SECONDARY)
+  └──→ Phase 5B: Discord — FULL markdown report via bot (6-7 messages)
         └── 1 embed: ticker, price, score, recommendation, VRP signal, 1-line summary
 ```
 
@@ -229,31 +229,8 @@ Parameters:
 
 ## Discord Summary (Phase 5B)
 
-Discord now receives a SHORT summary only (1 embed, not 6-7):
+Discord receives the **FULL analysis** as 6-7 markdown messages via the Discord MCP bot (summary, market structure, volatility, flow & positioning, VRP, trade idea, payoff diagram).
 
-```json
-{
-  "embeds": [{
-    "title": "{TICKER} — ${PRICE} — {RECOMMENDATION}",
-    "description": "{ONE_LINE_EXECUTIVE_SUMMARY}",
-    "color": "{COLOR_INT}",
-    "fields": [
-      {"name": "Score", "value": "{SCORE}/100", "inline": true},
-      {"name": "VRP", "value": "{VRP_SIGNAL} (z={VRP_Z})", "inline": true},
-      {"name": "Grade", "value": "{GRADE}", "inline": true},
-      {"name": "IV Rank", "value": "{IV_RANK}/100", "inline": true},
-      {"name": "GEX", "value": "{GEX_SIGN} (flip ${FLIP})", "inline": true},
-      {"name": "Trade", "value": "{STRATEGY_SHORT}", "inline": true}
-    ],
-    "footer": {"text": "Full report → email | {TIMESTAMP} ET"}
-  }]
-}
-```
+**Channel ID:** Read from `config["discord_chat_id"]`. If empty → skip Discord entirely.
 
-**Webhook URL:** Read from `config["discord_webhook_url"]`. If empty → skip Discord entirely.
-
-**Send via Bash/Python as before** (write JSON to temp file, curl, check response code):
-- 200/204 → success
-- 401/404 → "Discord webhook invalid — run --setup to update"
-- 429 → retry after `retry_after`
-- Other → "Discord delivery failed"
+**See `references/discord-delivery.md`** for all message templates, char budgets, and error handling.

@@ -325,13 +325,16 @@ strikes.slice(0, strategyType === 'iron_condor' ? 4 : 2).forEach(k => {
 4. Screenshot: `browser_take_screenshot` → saves to `/tmp/uw-payoff-{TICKER}-{YYYYMMDD}.png`
 5. Navigate back to UW page or close the tab
 
-## Discord Upload (Embed 6)
+## Discord Upload
 
-Send the screenshot as a multipart form upload with an image embed:
+Send the screenshot as a file attachment via the Discord MCP bot:
 
-```bash
-curl -s -o /dev/null -w "%{http_code}" \
-  -F "payload_json={\"embeds\":[{\"title\":\"📉 Payoff Diagram — {STRATEGY_NAME}\",\"image\":{\"url\":\"attachment://uw-payoff-{TICKER}.png\"},\"color\":{COLOR},\"footer\":{\"text\":\"Black-Scholes estimate • Verify at broker\"}}]}" \
-  -F "file1=@/tmp/uw-payoff-{TICKER}-{YYYYMMDD}.png;filename=uw-payoff-{TICKER}.png" \
-  "{WEBHOOK_URL}"
 ```
+mcp__plugin_discord_discord__reply(
+  chat_id=config["discord_chat_id"],
+  text="📉 Payoff Diagram — {STRATEGY_NAME}",
+  files=["/tmp/uw-payoff-{TICKER}-{YYYYMMDD}.png"]
+)
+```
+
+If the payoff file doesn't exist or upload fails, skip silently. See `references/discord-delivery.md` for full error handling.

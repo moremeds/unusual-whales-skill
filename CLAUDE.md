@@ -44,7 +44,7 @@ docs/strategy/                    ← Research docs (VRP, PCR, GEX, skew, chain-
 
 **Lazy evaluation:** No daemons or cron. Outcome checks run at invocation start (capped at 10, async). Alerts check at analysis end. Calibration queries on demand.
 
-**Dual delivery:** Email (Gmail MCP) = primary rich HTML. Discord = secondary short summary. Webhook URL in config only — never hardcoded.
+**Dual delivery:** Email (Gmail MCP) = full rich HTML. Discord = hybrid: webhook for rich embeds (6 per report) + bot for file uploads and interactive features. Webhook URL and channel ID in config only — never hardcoded.
 
 **Tiered extraction:** Tier 0 (React Fiber/Highcharts) > Tier 1 (DOM/JS) > Tier 2 (Snapshot) > Tier 3 (API fallback). UW REST API returns stale data — always extract from the page.
 
@@ -63,7 +63,7 @@ docs/strategy/                    ← Research docs (VRP, PCR, GEX, skew, chain-
 4   Canonical AnalysisReport formatting
 4.5 DuckDB persistence
 5A  Email delivery (Gmail MCP — full HTML)
-5B  Discord delivery (short summary, 1 embed)
+5B  Discord delivery (full report, 6-7 messages via bot)
 5.5 Outcome auto-check (async, capped at 10)
 5.6 Alert check
 ```
@@ -89,7 +89,7 @@ Score → recommendation: STRONG BUY (+60 to +100), BUY (+20 to +59), NEUTRAL (-
 ## Critical Rules
 
 - **Never use UW REST API for primary data extraction** — it returns stale data. Always extract from page via React Fiber/Highcharts.
-- **Never hardcode the Discord webhook URL** — read from config. If no config, skip Discord.
+- **Never hardcode the Discord channel ID** — read from config. If no config, skip Discord.
 - **Never recommend unbounded-risk strategies** (naked calls/puts, short straddles).
 - **Always use LIVE price from page header** for GEX analysis, not the GEX spot price (which may lag 1-3 trading days).
 - **OI/Shorts data is always T+1** — label with `[T+1]` badge.

@@ -131,23 +131,19 @@ The brief is sent via Gmail MCP as a rich HTML email:
 
 ## Discord Delivery
 
-Short summary embed:
+Short markdown summary via Discord MCP bot:
 
-```json
-{
-  "embeds": [{
-    "title": "📊 Weekly Brief — {DATE}",
-    "description": "Model accuracy: {ACC}% (T+5) | Regime: {REGIME} | {N} analyses this week",
-    "color": 3447003,
-    "fields": [
-      {"name": "Put-Sell Window", "value": "{STATUS}", "inline": true},
-      {"name": "Alerts", "value": "{N_TRIGGERED} triggered", "inline": true},
-      {"name": "Top Signal", "value": "{BEST_BUCKET} ({ACC}%)", "inline": true}
-    ],
-    "footer": {"text": "Full brief → email | UW Intelligence"}
-  }]
-}
 ```
+📊 **Weekly Brief — {DATE}**
+
+**Accuracy:** {ACC}% (T+5) | **Regime:** {REGIME} | **Analyses:** {N} this week
+**Put-Sell Window:** {STATUS} | **Alerts:** {N_TRIGGERED} triggered
+**Top Signal:** {BEST_BUCKET} ({ACC}%)
+
+_Full brief → email | UW Intelligence_
+```
+
+Send via `mcp__plugin_discord_discord__reply(chat_id=config["discord_chat_id"], text="...")`. See `references/discord-delivery.md` for error handling.
 
 ## Graceful Degradation
 

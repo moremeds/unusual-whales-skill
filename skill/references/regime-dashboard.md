@@ -82,24 +82,22 @@ else:
 
 ## Discord Delivery
 
-Send as 1 embed (same short format as analysis summaries):
+Short markdown summary via Discord MCP bot:
 
-```json
-{
-  "embeds": [{
-    "title": "📊 Market Regime — {REGIME}",
-    "description": "{VERDICT}",
-    "color": "{COLOR_INT}",
-    "fields": [
-      {"name": "SPY", "value": "${SPY_PRICE} | GEX: {SIGN} | Flip: ${FLIP}", "inline": true},
-      {"name": "QQQ", "value": "${QQQ_PRICE} | GEX: {SIGN} | Flip: ${FLIP}", "inline": true},
-      {"name": "Vol", "value": "IV Rank {IV_RANK} | VRP z={VRP_Z} | {TS}", "inline": false},
-      {"name": "Put-Sell", "value": "{WINDOW_STATUS}", "inline": true}
-    ],
-    "footer": {"text": "UW Regime Check • {TIMESTAMP} ET"}
-  }]
-}
 ```
+📊 **Market Regime — {REGIME}**
+
+{VERDICT}
+
+**SPY:** ${SPY_PRICE} | GEX: {SIGN} | Flip: ${FLIP}
+**QQQ:** ${QQQ_PRICE} | GEX: {SIGN} | Flip: ${FLIP}
+**Vol:** IV Rank {IV_RANK} | VRP z={VRP_Z} | {TS}
+**Put-Sell:** {WINDOW_STATUS}
+
+_UW Regime Check • {TIMESTAMP} ET_
+```
+
+Send via `mcp__plugin_discord_discord__reply(chat_id=config["discord_chat_id"], text="...")`. See `references/discord-delivery.md` for error handling.
 
 ## Email Delivery
 

@@ -90,7 +90,7 @@ ReasoningState {
 
 ## Phase 3.6: Post-Trade Synthesis (Narrative + Risk)
 
-Runs after Phase 3 trade idea generation (and after Phase 3.5 payoff if applicable). Reviews the complete picture and produces narrative content for Discord embeds.
+Runs after Phase 3 trade idea generation (and after Phase 3.5 payoff if applicable). Reviews the complete picture and produces narrative content for Discord messages and email.
 
 ### 1. Executive Summary Enhancement
 
@@ -108,7 +108,7 @@ Rules:
 
 ### 2. Trade Idea Reasoning
 
-Write the "Reasoning" field for Embed 6 as a coherent narrative tying the trade to the analysis.
+Write the "Reasoning" section as a coherent narrative tying the trade to the analysis (used in email report).
 
 **Bad:** "Score is -45, bearish, so bear put spread."
 
@@ -121,24 +121,24 @@ Rules:
 
 ### 3. Risk Callouts
 
-Produce up to 3 risk callouts, one per embed where relevant. Each is a single line, max 120 characters.
+Produce up to 3 risk callouts, one per analysis section where relevant. Each is a single line, max 120 characters.
 
-| Embed | Risk Type | Example |
-|-------|-----------|---------|
-| Market Structure (Embed 2) | Structural risk | "Negative gamma zone — moves below $175 amplify as dealers hedge" |
-| Volatility (Embed 3) | Vol risk | "Backwardated term structure signals near-term event risk" |
-| Flow (Embed 4) | Positioning risk | "Single-day flow — confirm with tomorrow's OI data before sizing up" |
+| Section | Risk Type | Example |
+|---------|-----------|---------|
+| Market Structure | Structural risk | "Negative gamma zone — moves below $175 amplify as dealers hedge" |
+| Volatility | Vol risk | "Backwardated term structure signals near-term event risk" |
+| Flow & Positioning | Positioning risk | "Single-day flow — confirm with tomorrow's OI data before sizing up" |
 
 Rules:
 - Only produce a callout if there's a genuine risk worth noting
-- If no risk applies for an embed, produce nothing (the embed's "Note" field will be omitted entirely)
+- If no risk applies for a section, produce nothing (the section's risk note will be omitted entirely)
 - **Never produce a callout with empty or placeholder text** — omit it completely
-- Max 1 callout per embed, max 120 chars each
+- Max 1 callout per section, max 120 chars each
 
 ### 4. VRP Qualifier
 
 If Phase 2.5 flagged concerns that affect the VRP signal:
-- **VRP SELL + concerns:** Add a qualifier to Embed 5's description. Example: "VRP conditions met, but negative GEX creates dealer short-gamma risk for put sellers. Consider reducing size."
+- **VRP SELL + concerns:** Add a qualifier to the VRP section. Example: "VRP conditions met, but negative GEX creates dealer short-gamma risk for put sellers. Consider reducing size."
 - **VRP DO NOT SELL:** Briefly note what would need to change. Example: "VRP inverted (z=-0.3). Would need IV to expand or RV to compress for premium-selling edge."
 
 If no concerns affect VRP, produce no qualifier (field is null).
