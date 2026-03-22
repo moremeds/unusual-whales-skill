@@ -52,14 +52,17 @@ docs/strategy/                    ← Research docs (VRP, PCR, GEX, skew, chain-
 
 ```
 0   Auth + Chrome profile resync
-0.5 Shared market context (batch only: SPY/QQQ/sector ETFs)
+0.5 Market benchmark context (SPY + sector ETF; batch adds QQQ + all sectors)
 1   Data extraction (6 pages via Playwright)
 1.5 VRP data extraction (API on volatility page)
 2   4-bucket scoring (Market Structure ±28, Vol ±28, Flow ±24, Positioning ±20)
 2.5 AI signal synthesis (confluence, grade A/B/C, override flags)
+2.7 Scenario analysis (bull/base/bear paths from GEX + vol surface)
+2.8 Cross-ticker context (benchmark comparison vs SPY/sector)
 3   Trade idea generation (directional + VRP put-selling)
+3.2 Trade structure evaluation (candidate comparison using IV smile + scenarios)
 3.5 Payoff visualization (Chart.js → Playwright screenshot)
-3.6 Narrative synthesis (rewrite summary + trade reasoning)
+3.6 Narrative synthesis (rewrite summary + trade reasoning + scenarios + structure)
 4   Canonical AnalysisReport formatting
 4.5 DuckDB persistence
 5A  Email delivery (Gmail MCP — full HTML)

@@ -104,6 +104,8 @@ URL patterns, expected data shapes, and extraction notes for each Unusual Whales
 **IV Smile:** `/api/volatility/smile/{T}?expiry={E}&date={D}`
 - Per-strike call/put IV — **also requires expiry param**
 - Useful for identifying put/call wing steepness
+- **ACTIVE — extracted from volatility page Highcharts chart (Step 2.5c in extraction-strategies.md)**
+- Used by: Phase 3.2 Trade Structuring (evaluate candidate structures against per-strike IV)
 
 **Percentiles:** `/api/volatility/percentiles/{T}?timespan=1y&date={D}`
 ```json
@@ -114,6 +116,8 @@ URL patterns, expected data shapes, and extraction notes for each Unusual Whales
 - `skewness > 0` = right/call skew, `< 0` = left/put skew
 - `kurtosis > 3` = fat tails (higher tail risk)
 - `vol_of_vol` = how volatile the vol itself is
+- **ACTIVE — extracted from volatility page DOM/Highcharts (Step 2.5b in extraction-strategies.md)**
+- Used by: Phase 2.7 Scenario Analysis (tail risk assessment, vol path prediction)
 
 **Vol Regime:** `/api/volatility/regime/{T}?timespan=1y&date={D}`
 ```json
@@ -151,6 +155,8 @@ Two response formats observed:
 {"days": 5, "volatility": "0.401", "percentile": "0.491", "implied_move_perc": "0.031"}
 ```
 - Shows implied ±move per timeframe — great for trade sizing context
+- **ACTIVE — extracted from volatility page DOM/Highcharts (Step 2.5a in extraction-strategies.md)**
+- Used by: Phase 2.7 Scenario Analysis (bull/bear target calibration via expected move range)
 
 ### 3. Net Premium / Flow
 

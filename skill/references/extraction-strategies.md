@@ -270,6 +270,225 @@ Navigate to `/stock/{TICKER}/volatility`, wait 3-4s, then extract:
 }
 ```
 
+### Step 2.5: Additional Volatility Data (on Volatility Page)
+
+**Runs immediately after Step 2 (Volatility).** No additional navigation needed — extract from charts/DOM already rendered on `/stock/{TICKER}/volatility`.
+
+These data points feed the new AI reasoning phases (Scenario Analysis, Trade Structuring) and are **all optional** — each has explicit fallback behavior when data is unavailable.
+
+#### 2.5a: Implied Moves
+
+Extract implied move data from the volatility page. Look for a Highcharts chart or DOM panel showing implied moves by timeframe.
+
+```js
+// Extract implied moves from Volatility page
+// Look for chart or DOM text with "Implied Move" data
+() => {
+  const result = { moves: [], source: null };
+
+  // Tier 0: Try Highcharts charts for implied move data
+  const containers = document.querySelectorAll('[data-highcharts-chart]');
+  for (const container of containers) {
+    const fiberKey = Object.keys(container).find(k => k.startsWith('__reactFiber'));
+    if (!fiberKey) continue;
+    const options = container[fiberKey].return?.memoizedProps?.options;
+    if (!options?.series) continue;
+
+    const title = (options.title?.text || '').toLowerCase();
+    const seriesName = (options.series[0]?.name || '').toLowerCase();
+
+    // Look for implied move chart (title or series name contains "implied" or "move")
+    if (title.includes('implied') || seriesName.includes('implied') || title.includes('move')) {
+      result.source = 'highcharts';
+      for (const point of (options.series[0]?.data || [])) {
+        result.moves.push({
+          days: point.x || point.category,
+          implied_move_perc: typeof point.y === 'number' ? parseFloat((point.y * 100).toFixed(2)) : null,
+          raw: point.y
+        });
+      }
+      break;
+    }
+  }
+
+  // Tier 1: DOM text fallback — look for "Implied Move ±X%" patterns
+  if (result.moves.length === 0) {
+    const text = document.body.innerText;
+    const patterns = [
+      /(\d+)\s*(?:day|d)\s*implied\s*move[:\s]*[±]?([\d.]+)%/gi,
+      /implied\s*move\s*(\d+)\s*(?:day|d)[:\s]*[±]?([\d.]+)%/gi
+    ];
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        result.moves.push({
+          days: parseInt(match[1]),
+          implied_move_perc: parseFloat(match[2])
+        });
+      }
+    }
+    if (result.moves.length > 0) result.source = 'dom';
+  }
+
+  return result;
+}
+```
+
+**Output — `ImpliedMoves`:**
+```
+ImpliedMoves {
+  moves: [{ days: number, implied_move_perc: number }]
+  source: "highcharts" | "dom" | null
+}
+```
+
+**Fallback:** If no implied move data found (both tiers fail), set `implied_moves = null`. Phase 2.7 Scenario Analysis degrades to GEX-walls-only targets with note: "implied move data unavailable — targets based on GEX structure only."
+
+#### 2.5b: Volatility Percentiles (Vol-of-Vol, Kurtosis, Skewness)
+
+Extract percentile/distribution data from the volatility page. These metrics measure tail risk and vol stability.
+
+```js
+// Extract volatility percentile data from Volatility page
+// Look for Highcharts chart or DOM elements with skewness, kurtosis, vol-of-vol
+() => {
+  const result = { percentiles: null, source: null };
+
+  // Tier 0: Look for Highcharts chart with percentile data
+  const containers = document.querySelectorAll('[data-highcharts-chart]');
+  for (const container of containers) {
+    const fiberKey = Object.keys(container).find(k => k.startsWith('__reactFiber'));
+    if (!fiberKey) continue;
+    const options = container[fiberKey].return?.memoizedProps?.options;
+    if (!options?.series) continue;
+
+    const title = (options.title?.text || '').toLowerCase();
+    const seriesName = (options.series[0]?.name || '').toLowerCase();
+
+    // Look for percentile/distribution chart
+    if (title.includes('percentile') || title.includes('kurtosis') ||
+        title.includes('skew') || seriesName.includes('vol of vol')) {
+      result.source = 'highcharts';
+      const data = options.series[0]?.data || [];
+      // Extract structured data from chart — format varies
+      result.percentiles = {
+        raw_chart_data: data.slice(0, 10),
+        series_names: options.series.map(s => s.name)
+      };
+      break;
+    }
+  }
+
+  // Tier 1: DOM text fallback — look for labeled values
+  if (!result.percentiles) {
+    const text = document.body.innerText;
+    const skewnessMatch = text.match(/skewness[:\s]*([-\d.]+)/i);
+    const kurtosisMatch = text.match(/kurtosis[:\s]*([\d.]+)/i);
+    const vovMatch = text.match(/vol(?:atility)?\s*of\s*vol[:\s]*([\d.]+)/i);
+    const ivPctMatch = text.match(/iv\s*percentile[:\s]*([\d.]+)/i);
+
+    if (skewnessMatch || kurtosisMatch || vovMatch || ivPctMatch) {
+      result.source = 'dom';
+      result.percentiles = {
+        skewness: skewnessMatch ? parseFloat(skewnessMatch[1]) : null,
+        kurtosis: kurtosisMatch ? parseFloat(kurtosisMatch[1]) : null,
+        vol_of_vol: vovMatch ? parseFloat(vovMatch[1]) : null,
+        iv_percentile: ivPctMatch ? parseFloat(ivPctMatch[1]) : null
+      };
+    }
+  }
+
+  return result;
+}
+```
+
+**Output — `VolPercentiles`:**
+```
+VolPercentiles {
+  skewness: number | null    // >0 = right/call skew, <0 = left/put skew
+  kurtosis: number | null    // >3 = fat tails (higher tail risk)
+  vol_of_vol: number | null  // how volatile the IV itself is
+  iv_percentile: number | null
+  source: "highcharts" | "dom" | null
+}
+```
+
+**Fallback:** If no percentile data found, set `percentiles = null`. Phase 2.7 skips tail-risk commentary: "kurtosis/vol-of-vol unavailable — scenario targets based on GEX walls and vol surface only."
+
+#### 2.5c: IV Smile (Per-Strike IV)
+
+Extract the IV smile from the volatility page. This shows how implied volatility varies by strike for a given expiry — critical for evaluating which strikes are cheap/expensive for trade structuring.
+
+```js
+// Extract IV smile from Volatility page
+// Look for Highcharts chart showing per-strike IV curves
+() => {
+  const result = { smile: null, source: null };
+
+  const containers = document.querySelectorAll('[data-highcharts-chart]');
+  for (const container of containers) {
+    const fiberKey = Object.keys(container).find(k => k.startsWith('__reactFiber'));
+    if (!fiberKey) continue;
+    const options = container[fiberKey].return?.memoizedProps?.options;
+    if (!options?.series) continue;
+
+    const title = (options.title?.text || '').toLowerCase();
+    const seriesNames = options.series.map(s => (s.name || '').toLowerCase());
+
+    // Look for smile/skew chart — typically has "call" and "put" IV series by strike
+    const hasCallPut = seriesNames.some(n => n.includes('call')) &&
+                       seriesNames.some(n => n.includes('put'));
+    const isSmile = title.includes('smile') || title.includes('skew') ||
+                    title.includes('volatility by strike') || hasCallPut;
+
+    if (isSmile) {
+      result.source = 'highcharts';
+      const strikes = [];
+
+      for (const series of options.series) {
+        const name = (series.name || '').toLowerCase();
+        const isCall = name.includes('call');
+        const isPut = name.includes('put');
+
+        for (const point of (series.data || [])) {
+          const strike = point.x || point.category;
+          if (typeof strike !== 'number') continue;
+
+          let existing = strikes.find(s => s.strike === strike);
+          if (!existing) {
+            existing = { strike, call_iv: null, put_iv: null };
+            strikes.push(existing);
+          }
+          if (isCall) existing.call_iv = point.y;
+          else if (isPut) existing.put_iv = point.y;
+        }
+      }
+
+      result.smile = strikes.sort((a, b) => a.strike - b.strike);
+      break;
+    }
+  }
+
+  return result;
+}
+```
+
+**Output — `IVSmile`:**
+```
+IVSmile {
+  smile: [{
+    strike: number,
+    call_iv: number | null,   // call implied volatility at this strike
+    put_iv: number | null     // put implied volatility at this strike
+  }] | null
+  source: "highcharts" | null
+}
+```
+
+**Expiry context:** The smile chart on the volatility page typically shows the currently-selected expiry. If a specific expiry needs to be selected, use the page's expiry selector (DOM click on date picker) to choose the ~30-45 DTE expiry. Use the term structure data (already extracted in Step 2) to identify which expiry to select.
+
+**Fallback:** If no smile chart found, set `smile = null`. Phase 3.2 Trade Structuring degrades to evaluation based on term structure + 25-delta skew + GEX levels only. Note: "IV smile unavailable — structure evaluation based on term structure and skew."
+
 ### Step 3: Net Premium Page
 
 Navigate to `/stock/{TICKER}/net-premium`, wait 3-4s, then extract:

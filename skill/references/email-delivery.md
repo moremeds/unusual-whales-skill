@@ -47,6 +47,25 @@ Phase 4 (AnalysisReport)
     <p style="margin: 0; line-height: 1.5;">{PHASE_3_6_NARRATIVE}</p>
   </div>
 
+  <!-- Scenarios (conditional — omit if ScenarioState is null) -->
+  {IF_SCENARIOS:
+  <div style="background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+    <h2 style="margin: 0 0 8px; font-size: 16px;">🎯 Scenarios</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="border-bottom: 1px solid #2a2a4a;">
+        <th style="text-align: left; padding: 4px 8px; color: #a0a0a0;">Path</th>
+        <th style="text-align: left; padding: 4px 8px; color: #a0a0a0;">Trigger → Target</th>
+        <th style="text-align: left; padding: 4px 8px; color: #a0a0a0;">Mechanism</th>
+        <th style="text-align: left; padding: 4px 8px; color: #a0a0a0;">Probability</th>
+      </tr>
+      {IF_BULL: <tr><td style="padding: 4px 8px;">🟢 Bull</td><td style="padding: 4px 8px;">{BULL_TRIGGER} → ${BULL_TARGET}</td><td style="padding: 4px 8px;">{BULL_MECHANISM}</td><td style="padding: 4px 8px;">{BULL_PROB}</td></tr>}
+      <tr><td style="padding: 4px 8px;">⚪ Base</td><td style="padding: 4px 8px;">${BASE_LOW} – ${BASE_HIGH}</td><td style="padding: 4px 8px;">{BASE_MECHANISM}</td><td style="padding: 4px 8px;">{BASE_PROB}</td></tr>
+      {IF_BEAR: <tr><td style="padding: 4px 8px;">🔴 Bear</td><td style="padding: 4px 8px;">{BEAR_TRIGGER} → ${BEAR_TARGET}</td><td style="padding: 4px 8px;">{BEAR_MECHANISM}</td><td style="padding: 4px 8px;">{BEAR_PROB}</td></tr>}
+    </table>
+    <div style="margin-top: 6px; font-size: 12px; color: #a0a0a0;">Key level: ${KEY_LEVEL} | Vol outlook: {VOL_SCENARIO}</div>
+  </div>
+  }
+
   <!-- Market Structure -->
   <div style="background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
     <h2 style="margin: 0 0 8px; font-size: 16px;">📊 Market Structure ({MKT_SCORE}/28)</h2>
@@ -146,6 +165,20 @@ Phase 4 (AnalysisReport)
     </div>
   </div>
 
+  <!-- Market Context (conditional — omit if CrossTickerState is null) -->
+  {IF_CROSS_TICKER:
+  <div style="background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+    <h2 style="margin: 0 0 8px; font-size: 16px;">🌐 Market Context</h2>
+    <div style="font-size: 13px;">
+      <div style="margin-bottom: 4px;"><strong>vs SPY:</strong> IV Rank {SPY_IV_RANK} | GEX {SPY_GEX_REGIME}</div>
+      {IF_SECTOR: <div style="margin-bottom: 4px;"><strong>vs {SECTOR_ETF}:</strong> IV Rank {SECTOR_IV_RANK} | GEX {SECTOR_GEX_REGIME}</div>}
+    </div>
+    <ul style="margin: 8px 0 0; padding-left: 20px; font-size: 13px;">
+      <!-- {RELATIVE_INSIGHTS} — 2-4 bullet points, max 120 chars each -->
+    </ul>
+  </div>
+  }
+
   <!-- Trade Idea -->
   {IF_TRADE:
   <div style="background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 16px; border-left: 4px solid {COLOR};">
@@ -159,6 +192,20 @@ Phase 4 (AnalysisReport)
       <div><strong>IV at Entry:</strong> ~{IV}%</div>
     </div>
     <div style="margin-top: 8px; font-size: 13px;"><strong>Reasoning:</strong> {TRADE_REASONING}</div>
+    {IF_CANDIDATES:
+    <div style="margin-top: 8px; font-size: 12px;">
+      <strong>Why This Structure</strong>
+      <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
+        <tr style="border-bottom: 1px solid #2a2a4a;">
+          <th style="text-align: left; padding: 3px 6px; color: #a0a0a0;">Structure</th>
+          <th style="text-align: left; padding: 3px 6px; color: #a0a0a0;">For</th>
+          <th style="text-align: left; padding: 3px 6px; color: #a0a0a0;">Against</th>
+        </tr>
+        <!-- {CANDIDATES_TABLE_ROWS} — winner row highlighted with ✓ -->
+      </table>
+      {IF_SMILE: <div style="margin-top: 4px; font-size: 11px; color: #a0a0a0;">📐 {SMILE_CONTEXT}</div>}
+    </div>
+    }
     <div style="margin-top: 8px; padding: 8px; background: #0d1117; border-radius: 4px; font-size: 12px;">
       <strong>Management Plan</strong><br>
       • Take profit: ${TP_PRICE} ({TP_PCT}% of max)<br>

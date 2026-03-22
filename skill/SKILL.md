@@ -98,37 +98,60 @@ See `references/config.md` for schema and loading logic.
    - After user confirms, re-check that Chrome is closed (step 4), then navigate to the GEX page and re-check auth
 11. **If authenticated:** Extract current price from page header `status` element (e.g., "Current price 178.03") or from page title as fallback
 
-### Phase 0.5: Shared Market Context (Batch Only)
+### Phase 0.5: Market Benchmark Context
 
-**Skip this phase if single-ticker mode (ticker_list has 1 entry).**
+**Runs for ALL analyses** — single-ticker and batch. Provides benchmark data for the cross-ticker intelligence in Phase 2.8. Skip only if `--fast` or `--regime` mode.
 
-Load `references/batch-mode.md` for sector ETF mapping and SharedContext structure.
+Load `references/batch-mode.md` for sector ETF mapping and SharedContext/BenchmarkContext structures.
 
-Extract shared context once for the entire batch:
+#### Single-Ticker Mode
+
+Extract benchmark context for SPY + the ticker's sector ETF (~15-20s):
 
 1. **SPY Context** — Navigate to `/stock/SPY/greek-exposure`:
    - GEX flip point, net gamma sign, top 3 gamma walls
    - Price from page header
 
-2. **QQQ Context** — Navigate to `/stock/QQQ/greek-exposure`:
-   - Same as SPY
-
-3. **VIX Proxy** — From SPY volatility page (`/stock/SPY/volatility`):
+2. **SPY Volatility** — Navigate to `/stock/SPY/volatility`:
    - IV rank (proxy for market fear level)
    - Term structure shape
 
-4. **Sector ETF Baselines** — For each unique sector represented in ticker_list:
-   - Look up sector ETF from mapping (e.g., TSLA → XLY, NVDA → XLK)
+3. **Sector ETF** — Resolve ticker's sector, then extract:
+   - Look up sector via `/api/companies/{T}?thin=true` → `sector` field → ETF mapping
+   - **Fallback:** If API fails, use static mapping table in batch-mode.md. If ticker has no clear sector, skip sector ETF (SPY-only comparison).
    - Navigate to `/stock/{ETF}/greek-exposure` → GEX flip + sign
    - Navigate to `/stock/{ETF}/volatility` → IV rank + skew direction
-   - ~15-20s per sector ETF (2 pages)
+
+Store as `BenchmarkContext`:
+```
+BenchmarkContext {
+  spy: { iv_rank, gex_regime, gex_flip, price, data_date, freshness }
+  sector_etf: { ticker, iv_rank, gex_regime, gex_flip, data_date, freshness } | null
+}
+```
+
+**Time cost:** ~15-20s (SPY: 2 pages + sector ETF: 2 pages, with jitter).
+
+#### Batch Mode (additional)
+
+Same as single-ticker, plus:
+
+1. **QQQ Context** — Navigate to `/stock/QQQ/greek-exposure` + volatility:
+   - Same extraction as SPY
+
+2. **All Sector ETFs** — For each unique sector across all tickers in `ticker_list`:
    - Deduplicate: if multiple tickers share a sector, extract once
+   - ~15-20s per unique sector ETF
+
+Store as `SharedContext` (see `references/batch-mode.md` for full structure). BenchmarkContext is a subset of SharedContext — single-ticker uses BenchmarkContext, batch uses the full SharedContext.
+
+**Time cost:** ~20s base (SPY + QQQ) + ~15-20s per unique sector. For 3 sectors: ~65-80s total.
+
+#### Common Rules
 
 **Reuse optimization:** If SPY or QQQ is in the ticker_list, their Phase 1 extraction will duplicate Phase 0.5 work. Phase 0.5 data is lightweight (GEX flip + sign only), while Phase 1 does full 6-page extraction — overlap is minimal. Phase 1 should NOT assume the browser is already on the right page after Phase 0.5.
 
-Store as `SharedContext` (see `references/batch-mode.md` for full structure). Each source includes `data_date` and `freshness` (`live` | `stale` | `unavailable`). Phase 2.5 must downweight or note stale shared-context inputs.
-
-**Time cost:** ~20s base (SPY + QQQ) + ~15-20s per unique sector. For 3 sectors: ~65-80s total. Front-loaded — per-ticker analysis is unchanged.
+Store with `data_date` and `freshness` (`live` | `stale` | `unavailable`). Phase 2.8 must downweight or note stale benchmark inputs.
 
 ---
 
@@ -136,21 +159,30 @@ Store as `SharedContext` (see `references/batch-mode.md` for full structure). Ea
 
 **For each ticker in ticker_list:**
 
-Run Phase 1 → 1.5 → 2 → 2.5 → 3 → 3.5 → 3.6 → 4 → 4.5 → 5 for this ticker.
+Run Phase 1 → 1.5 → 2 → 2.5 → 2.7 → 2.8 → 3 → 3.2 → 3.5 → 3.6 → 4 → 4.5 → 5 for this ticker.
 
 - Phase 2.5 receives SharedContext (if batch mode) for sector-relative analysis
+   - Phase 2.8 receives BenchmarkContext (always) or SharedContext (batch) for cross-ticker intelligence
 - Phase 4.5 persists to DuckDB with batch_id linking all tickers from this run
 - Phase 5 sends Discord messages immediately (don't wait for other tickers)
 - Conversation output per ticker: 1-line confirmation
 - **Failure isolation:** If a ticker encounters a fatal error (Cloudflare, 404, ticker not found), output the error, skip remaining phases for that ticker, and continue the loop for the next ticker. Do not abort the entire batch.
 - **Context management:** After each ticker's Phase 5 completes, the intermediate extraction data for that ticker is no longer needed. Phase 4.5 captures it permanently. Only carry forward SharedContext and the running batch summary.
 
-After ALL tickers complete, output batch summary:
+After ALL tickers complete:
+
+1. **Batch Cross-Comparison** — Load `references/ai-reasoning.md` § Batch Cross-Comparison + `references/batch-mode.md` § Batch Cross-Comparison. Cross-compare all completed ticker results: rank setups, identify divergences, find vol relative value. Produces `BatchComparison`. Skip if only 1 ticker completed.
+
+2. **Output batch summary:**
 ```
 ✅ Batch complete: {N}/{TOTAL} tickers analyzed
-{T1} ${P1} — {SCORE1}/100 — {REC1}
-{T2} ${P2} — {SCORE2}/100 — {REC2}
-{T3} ${P3} — {SCORE3}/100 — {REC3}
+{T1} ${P1} — {SCORE1}/100 — {REC1} — Grade {GRADE1}
+{T2} ${P2} — {SCORE2}/100 — {REC2} — Grade {GRADE2}
+{T3} ${P3} — {SCORE3}/100 — {REC3} — Grade {GRADE3}
+
+🏆 Best setup: {BEST_TICKER} — {REASON}
+📊 Divergences: {DIVERGENCE_NOTES}
+💡 Relative value: {VOL_RELATIVE_VALUE}
 ```
 
 ---
@@ -256,6 +288,36 @@ Produce the `ReasoningState` structure (see `ai-reasoning.md`). Phase 3 consumes
 
 Do NOT output this reasoning to the user — it feeds into later phases.
 
+### Phase 2.7: Scenario Analysis
+
+**Skip if:** `--fast` or `--regime` mode.
+
+Load `references/ai-reasoning.md` § Scenario Analysis.
+
+Using Phase 2.5 `ReasoningState` + all extracted data + ImpliedMoves (Step 2.5a) + VolPercentiles (Step 2.5b), produce `ScenarioState` with bull/base/bear paths grounded in GEX levels and vol surface.
+
+- Bull/bear targets anchored to GEX walls + implied move range
+- Base case = range between nearest support/resistance walls
+- Use kurtosis for tail risk, vol-of-vol for IV path prediction
+- Probability hints: qualitative only (likely/moderate/unlikely)
+- If data inputs are null, degrade gracefully (see fallback rules in ai-reasoning.md)
+
+Do NOT output to user — feeds Phase 3.2 (strike alignment), Phase 3.6 (narrative), and delivery (scenarios section).
+
+### Phase 2.8: Cross-Ticker Context
+
+**Skip if:** `--fast`, `--regime`, or Phase 0.5 failed (BenchmarkContext is null).
+
+Load `references/ai-reasoning.md` § Cross-Ticker Context.
+
+Using Phase 0.5 `BenchmarkContext` (SPY + sector ETF), compare this ticker's signals against benchmarks and produce `CrossTickerState` with 2-3 relative insights.
+
+- GEX regime comparison (isolated vs sector-wide weakness/strength)
+- IV rank comparison (ticker-specific vol vs sector baseline)
+- Directional divergence (swimming against the tide?)
+
+Do NOT output to user — feeds Phase 3.6 (narrative) and delivery (market context section).
+
 ### Phase 3: Trade Idea Generation
 
 **Two trade ideas are generated: a directional trade (from composite score) AND a VRP put-selling assessment.**
@@ -302,6 +364,16 @@ Strike anchors: Use GEX resistance walls as call spread targets, GEX support wal
 - Note implied move (from interpolated IV) relative to spread width
 - Note vol regime and earnings crash probability if earnings within 30 days
 - Note VRP rank to justify debit vs credit strategy choice
+
+#### 3.2: Trade Structure Evaluation
+
+**Skip if:** 3A produced "Wait for setup" or "event risk — avoid", or `--fast` mode, or all supplementary data is null (smile + scenarios + implied moves).
+
+Load `references/analysis-framework.md` § Phase 3.2: Trade Structure Evaluation.
+
+If 3A produced a trade, evaluate 1-2 alternative structures against the primary candidate using IV smile (Step 2.5c), ScenarioState (Phase 2.7), ImpliedMoves (Step 2.5a), and GEX levels. Select the optimal structure with reasoning.
+
+Output: `candidates_considered[]`, `structure_reasoning`, `smile_context` — appended to the TradeIdea. Phase 3.6 synthesizes this into the trade narrative.
 
 #### 3B: VRP Put-Selling Assessment
 
@@ -364,7 +436,7 @@ Load `references/payoff-visualization.md` for Black-Scholes code, strategy formu
 
 Load `references/ai-reasoning.md` § Post-Trade Synthesis.
 
-Using Phase 2.5 `ReasoningState` + Phase 3 trade idea + all extracted data:
+Using Phase 2.5 `ReasoningState` + Phase 2.7 `ScenarioState` + Phase 2.8 `CrossTickerState` + Phase 3/3.2 trade idea (with candidates_considered) + all extracted data:
 
 1. **Rewrite executive summary** — Connect signals into a coherent narrative (3-4 sentences, max 400 chars). Lead with the most important insight. Avoid listing metrics — explain what they mean together.
 2. **Write trade reasoning** — For Embed 6's "Reasoning" field (max 600 chars), explain why this specific trade at these strikes makes sense given the analysis. Reference specific signals. If 3A is "Wait" + VRP SELL, write reasoning for the VRP trade.

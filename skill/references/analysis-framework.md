@@ -347,6 +347,65 @@ After scoring, Phase 2.5 (Signal Synthesis) checks for patterns where the AI sho
 
 **NEVER recommend:** Short straddle, short strangle, naked calls, naked puts, or any unbounded-risk strategy.
 
+### Phase 3.2: Trade Structure Evaluation
+
+**Runs ONLY if Phase 3A produces a trade** (not "Wait for setup", not "event risk — avoid"). The precedence ladder above (safety gates → overrides → quality gating) must pass first.
+
+Phase 3.2 takes the rule-table's primary candidate and evaluates it against 1-2 alternatives using the full vol surface data. This is Claude reasoning over extracted data — no external API calls.
+
+#### Process
+
+1. **Primary candidate:** The strategy selected by the rule table above (e.g., "Bear Put Spread")
+2. **Generate alternatives:** Pick 1-2 alternative structures from the candidate pool that fit the same directional thesis:
+
+| Thesis | Candidate Pool |
+|--------|---------------|
+| Bullish | Bull call spread, bull put spread, call diagonal |
+| Bearish | Bear put spread, bear call spread, put diagonal |
+| Neutral + high IV | Iron condor, iron butterfly, calendar spread |
+| Backwardated | Calendar spread (already selected by rule table) |
+
+3. **Evaluate each candidate** against available data:
+
+| Factor | Data Source | Evaluation |
+|--------|-----------|------------|
+| IV smile shape | IVSmile from Step 2.5c (nullable) | Are the strikes you'd trade at fair or skewed? Elevated put IV at short strike = credit spread advantage |
+| Term structure | Already extracted (Step 2) | Contango favors calendars/diagonals; backwardation favors verticals |
+| Implied moves | ImpliedMoves from Step 2.5a (nullable) | Does the profit zone align with expected move range? |
+| Scenario alignment | ScenarioState from Phase 2.7 (nullable) | Does the structure profit in the most likely scenario path? |
+| GEX levels | Already extracted (Step 1) | Are strikes anchored to support/resistance walls? |
+
+4. **Select winner** with reasoning. If the primary candidate is still best, keep it — Phase 3.2 is not obligated to change the selection.
+
+#### Output (appended to TradeIdea)
+
+```
+  candidates_considered: [
+    {
+      structure: string,          // e.g., "Bear Call Spread"
+      reason_for: string,         // why it was considered
+      reason_against: string,     // why it lost (null for winner)
+      edge_metric: string         // e.g., "IV at short strike 12% above smile midpoint"
+    }
+  ]
+  structure_reasoning: string     // 2-3 sentences, max 300 chars
+  smile_context: string | null    // 1 sentence, max 120 chars (null if smile unavailable)
+```
+
+#### Fallback
+
+- `smile = null` → Evaluate based on term structure + 25-delta skew + GEX levels. Note: "IV smile unavailable — evaluation based on term structure and skew"
+- `ScenarioState = null` → Skip scenario alignment check
+- `implied_moves = null` → Skip expected move range check
+- If all supplementary data is null (smile + scenarios + implied moves), skip Phase 3.2 entirely — primary candidate stands without evaluation
+
+#### Rules
+
+- **Bounded-risk only:** Candidate pool never includes naked calls, naked puts, short straddles/strangles
+- **VRP track unchanged:** Phase 3.2 only applies to the directional trade (3A). VRP put-selling (3B) has its own selection logic in `vrp-put-selling.md`
+- **Merge rule preserved:** If 3A produces a bull put spread AND VRP conditions pass, the VRP-informed version still takes precedence
+- Phase 3.6 consumes `candidates_considered` and `structure_reasoning` to synthesize into the trade narrative
+
 ### Strike Selection
 
 Use GEX levels as strike anchors:

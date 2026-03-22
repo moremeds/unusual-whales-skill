@@ -55,15 +55,17 @@ Nasdaq:           QQQ   (always included in shared context)
 
 The companies API call is lightweight (JSON, no page navigation) and avoids hardcoding ticker→sector. Fall back to the table above only if the API call fails.
 
-## Batch Execution Flow
+## Execution Flow
 
 1. **Phase 0:** Parse args → build `ticker_list[]`
-2. **Phase 0.5:** If `len(ticker_list) > 1` → extract shared market context
+2. **Phase 0.5:** Extract market benchmark context (**always runs** unless `--fast` or `--regime`)
+   - Single-ticker: SPY + sector ETF → `BenchmarkContext`
+   - Batch: SPY + QQQ + all sector ETFs → `SharedContext` (superset of BenchmarkContext)
 3. **For each ticker in `ticker_list`:**
-   - Phase 1-1.5 → Phase 2 → Phase 2.5 → Phase 3-3.6 → Phase 4 → Phase 4.5 → Phase 5
+   - Phase 1-1.5 → Phase 2 → Phase 2.5 → Phase 2.7 → Phase 2.8 → Phase 3-3.6 → Phase 4 → Phase 4.5 → Phase 5
    - Discord messages ship immediately per ticker (don't wait for all)
    - Conversation confirmation per ticker (1-line)
-4. **After all tickers:** batch summary line
+4. **After all tickers (batch only):** Batch Cross-Comparison → batch summary message
 
 ## Scan-to-Batch Pipeline (`--scan --analyze-top N`)
 
@@ -73,7 +75,18 @@ The companies API call is lightweight (JSON, no page navigation) and avoids hard
 4. Feed qualifying candidates into batch pipeline: Phase 0.5 shared context → per-ticker loop
 5. If `--analyze-top` not specified, scan-only (no auto-batch)
 
-## SharedContext Structure
+## BenchmarkContext Structure (Single-Ticker + Batch)
+
+```
+BenchmarkContext {
+  spy: { iv_rank, gex_regime, gex_flip, price, data_date, freshness }
+  sector_etf: { ticker, iv_rank, gex_regime, gex_flip, data_date, freshness } | null
+}
+```
+
+`BenchmarkContext` is the minimal benchmark for cross-ticker intelligence (Phase 2.8). Always populated in Phase 0.5 unless `--fast`/`--regime`. `sector_etf` is null if sector resolution failed.
+
+## SharedContext Structure (Batch Only — Superset of BenchmarkContext)
 
 ```
 SharedContext {
@@ -115,3 +128,25 @@ Each source includes `data_date` (the actual trading day the data represents) an
    - Deduplicate: if multiple tickers share a sector, extract once
 
 **Reuse optimization:** If SPY or QQQ is in the ticker_list, their Phase 1 extraction will duplicate Phase 0.5 work. Phase 0.5 data is lightweight (GEX flip + sign only), while Phase 1 does full 6-page extraction — overlap is minimal. Phase 1 should NOT assume the browser is already on the right page after Phase 0.5.
+
+## Batch Cross-Comparison (Post-Loop)
+
+**Runs after all tickers complete in batch mode.** Cross-compares all per-ticker results to surface relative insights.
+
+Load `references/ai-reasoning.md` § Batch Cross-Comparison.
+
+**Inputs:** All completed ticker results (scores, grades, CrossTickerState, ScenarioState from each ticker's Phase 2.7/2.8).
+
+**Produces:**
+```
+BatchComparison {
+  best_setup: string          // "NVDA: A-grade, score +52, cleanest confluence"
+  divergences: string[]       // tickers moving against sector/index
+  vol_relative_value: string  // "AMD IV rank 45 vs NVDA 78 — cheaper vol for same sector thesis"
+  ranking: [{ ticker, score, grade, one_liner }]  // sorted by conviction
+}
+```
+
+**Output destination:** Added to batch summary message (Discord + conversation). Not sent per-ticker — only after the full loop completes.
+
+**Fallback:** If only 1 ticker successfully completed in a batch (others failed), skip cross-comparison — no meaningful comparison possible.

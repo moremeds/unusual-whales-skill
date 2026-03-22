@@ -104,6 +104,21 @@ color_map = {
 }
 ```
 
+**Conditional fields appended to Embed 1 (if data available):**
+
+```json
+// Add ONLY if ScenarioState is not null. Omit field entirely if null.
+{"name": "Scenarios", "value": "🟢 {BULL_TRIGGER} → ${BULL_TARGET}\n⚪ ${BASE_LOW}–${BASE_HIGH}\n🔴 {BEAR_TRIGGER} → ${BEAR_TARGET}", "inline": false}
+
+// Add ONLY if CrossTickerState is not null. Omit field entirely if null.
+{"name": "vs Market", "value": "{TOP_RELATIVE_INSIGHT}", "inline": false}
+```
+
+**Char budget:** Scenarios field max 240 chars (3 lines × 80 chars). If Embed 1 exceeds 5500 chars total, truncate scenarios to bull/bear only (drop base case line). vs Market field max 120 chars.
+
+```json
+```
+
 ### Embed 2: Market Structure
 
 ```json
@@ -385,3 +400,25 @@ If Discord fails completely:
 ❌ Discord delivery failed — showing full report below
 {FULL_REPORT}
 ```
+
+## Batch Cross-Comparison Message (Post-Loop)
+
+After all tickers in a batch complete, send an additional message with the cross-comparison results. This is a **separate bot message** (not an embed) sent to the same channel.
+
+```
+📊 **Batch Cross-Comparison** ({N} tickers)
+
+🏆 **Best Setup:** {BEST_TICKER} — Grade {GRADE}, Score {SCORE} — {ONE_LINER}
+
+📈 **Ranking:**
+1. {T1} — {SCORE1} ({GRADE1}) — {SUMMARY1}
+2. {T2} — {SCORE2} ({GRADE2}) — {SUMMARY2}
+3. {T3} — {SCORE3} ({GRADE3}) — {SUMMARY3}
+
+⚡ **Divergences:**
+{DIVERGENCE_NOTES}
+
+💡 **Relative Value:** {VOL_RELATIVE_VALUE}
+```
+
+**Conditional sections:** Omit Divergences if no divergences found. Omit Relative Value if null. Skip entire message if only 1 ticker completed.
